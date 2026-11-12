@@ -93,8 +93,8 @@
    <code>RELEASE</code> traz a versão e o SHA-256 de cada binário, e o <code>RELEASE.sig</code> é a assinatura dele.
    Esta é a chave de assinatura das releases:</p>
 <div class="box">
-  <p><span class="dim">fingerprint:</span><br><span class="fp">SHA256 bbb1 c46e c211 64f5 2da8 8815 ebbe b73c 6795 0bea e86e 79b4 a781 8057 cd77 ce1e</span></p>
-  <p><span class="dim">chave pública:</span><br><span class="fp">oH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=</span></p>
+  <p><span class="dim">fingerprint:</span><br><span class="fp">SHA256 aae1 82c8 5665 f874 fab6 a97e 93c5 333b aae8 ce15 7090 f247 c9e7 e2e6 f9d2 3890</span></p>
+  <p><span class="dim">chave pública:</span><br><span class="fp">UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=</span></p>
   <p class="dim">Confira a mesma fingerprint por outro canal: no README do
      <a href="https://github.com/hacking-table/crptochat-oss">repositório do código</a> ou com quem te passou o link.
      Se alguém trocasse esta página, trocaria a chave também.</p>
@@ -117,7 +117,7 @@
 <p><b>Conferência completa</b> (assinatura + hash):</p>
 <p><b>Linux</b> (troque o nome do arquivo se for ARM64):</p>
 <pre><code><span class="c"># 1) assinatura do manifesto (OpenSSL 3)</span>
-printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAoH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=\n-----END PUBLIC KEY-----\n' &gt; crptochat.pub
+printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAUXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=\n-----END PUBLIC KEY-----\n' &gt; crptochat.pub
 openssl base64 -d -A -in RELEASE.sig -out RELEASE.sig.bin
 openssl pkeyutl -verify -pubin -inkey crptochat.pub -rawin -in RELEASE -sigfile RELEASE.sig.bin
 <span class="c"># deve dizer: Signature Verified Successfully</span>

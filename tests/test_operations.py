@@ -276,7 +276,7 @@ def test_build_info_flag():
     assert out[0] == "crptochat-build" and out[1] == __version__ and out[3].isdigit()
 
 
-RELEASE_PUBKEY = "oH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE="
+RELEASE_PUBKEY = "UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE="
 
 
 def test_readme_publishes_the_release_key_fingerprint():
@@ -285,7 +285,7 @@ def test_readme_publishes_the_release_key_fingerprint():
     found = re.findall(r"`(SHA256 [0-9a-f ]{79})`", readme)
     # the first one is what the release workflow checks against CLIENT_SIGNING_PUBKEY
     assert found and found[0] == "SHA256 " + update.key_fingerprint(RELEASE_PUBKEY)
-    assert found[0] == "SHA256 bbb1 c46e c211 64f5 2da8 8815 ebbe b73c 6795 0bea e86e 79b4 a781 8057 cd77 ce1e"
+    assert found[0] == "SHA256 aae1 82c8 5665 f874 fab6 a97e 93c5 333b aae8 ce15 7090 f247 c9e7 e2e6 f9d2 3890"
 
 
 @needs_sh
