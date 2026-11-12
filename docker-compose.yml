@@ -1,0 +1,17 @@
+services:
+  server:
+    build: .
+    image: crptochat-server
+    container_name: crptochat
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - chown -R crpto:crpto /data && exec su -s /bin/sh crpto -c 'exec python -m crptochat.server --data /data'
+    ports:
+      - "7777:7777"
+    volumes:
+      - crptochat-data:/data
+    restart: unless-stopped
+
+volumes:
+  crptochat-data:

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<title>crptochat · downloads</title>
+<meta name="description" content="Chat de terminal com criptografia ponta a ponta. Baixe o cliente e conecte em crptochat.acpt.app.br.">
+<style>
+  :root {
+    --bg: #0b0b14; --panel: #12121f; --line: #2a2a44; --text: #e6e6f0; --dim: #8b8ba7;
+    --cyan: #3cf0ff; --magenta: #ff2fa0; --yellow: #ffe14d; --green: #3dff8a; --orange: #ffaa33;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  a { color: var(--cyan); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { border: 2px solid var(--magenta); padding: 24px; position: relative; }
+  header::before { content: "◢◤ CRPTOCHAT"; position: absolute; top: -13px; left: 16px; background: var(--bg);
+                   padding: 0 8px; color: var(--yellow); font-weight: bold; letter-spacing: .1em; }
+  h1 { margin: 0 0 8px; font-size: clamp(22px, 5vw, 34px); color: var(--cyan); line-height: 1.2; }
+  h1 span { color: var(--magenta); }
+  h2 { color: var(--yellow); font-size: 18px; margin: 40px 0 12px; letter-spacing: .05em; }
+  h2::before { content: "▓▒░ "; color: var(--magenta); }
+  p { margin: 8px 0; }
+  .dim { color: var(--dim); }
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding: 0; list-style: none; }
+  .tags li { border: 1px solid var(--line); padding: 2px 10px; color: var(--green); font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .dl { display: block; border: 1px solid var(--line); background: var(--panel); padding: 16px; text-decoration: none;
+        color: var(--text); transition: border-color .15s; }
+  .dl:hover, .dl:focus-visible { border-color: var(--cyan); outline: none; }
+  .dl.mine { border-color: var(--magenta); box-shadow: 0 0 0 1px var(--magenta) inset; }
+  .dl b { color: var(--cyan); display: block; font-size: 17px; }
+  .dl small { color: var(--dim); display: block; overflow-wrap: anywhere; }
+  .dl .badge { display: none; color: var(--magenta); font-size: 13px; }
+  .dl.mine .badge { display: block; }
+  .box { background: var(--panel); border-left: 3px solid var(--cyan); padding: 12px 16px; margin: 12px 0; }
+  .warn { border-left-color: var(--orange); }
+  .warn strong { color: var(--orange); }
+  pre { position: relative; background: #07070d; border: 1px solid var(--line); padding: 14px 16px; margin: 10px 0;
+        overflow-x: auto; white-space: pre; font-size: 14px; line-height: 1.5; }
+  pre code { color: var(--text); }
+  .c { color: var(--dim); }
+  .copy { position: absolute; top: 6px; right: 6px; background: var(--panel); color: var(--cyan); border: 1px solid var(--line);
+          font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+  .copy:hover { border-color: var(--cyan); }
+  .fp { color: var(--green); overflow-wrap: anywhere; word-break: break-all; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; }
+  td:first-child { color: var(--cyan); white-space: nowrap; }
+  footer { margin-top: 48px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+  @media (max-width: 520px) { td:first-child { white-space: normal; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>chat no terminal, <span>cifrado ponta a ponta</span></h1>
+  <p>O servidor só repassa blobs cifrados: não lê as conversas e, por padrão, não guarda histórico.
+     Canais abertos e privados, mensagens diretas com sigilo por sessão, voz e arquivos.</p>
+  <ul class="tags">
+    <li>E2EE</li><li>Ed25519 · X25519 · ChaCha20-Poly1305</li><li>nicks presos à chave</li><li>acesso anônimo</li>
+  </ul>
+</header>
+
+<h2>1. baixe o cliente</h2>
+<div class="grid" id="downloads">
+  <a class="dl" data-os="linux-amd64" href="crptochat-linux-amd64" download>
+    <span class="badge">▶ recomendado para você</span><b>Linux x86_64</b><small>crptochat-linux-amd64</small></a>
+  <a class="dl" data-os="linux-arm64" href="crptochat-linux-arm64" download>
+    <span class="badge">▶ recomendado para você</span><b>Linux ARM64</b><small>crptochat-linux-arm64 · Raspberry Pi 4/5</small></a>
+  <a class="dl" data-os="macos" href="crptochat-macos-arm64" download>
+    <span class="badge">▶ recomendado para você</span><b>macOS (Apple Silicon)</b><small>crptochat-macos-arm64</small></a>
+  <a class="dl" data-os="windows" href="crptochat-windows-amd64.exe" download>
+    <span class="badge">▶ recomendado para você</span><b>Windows x64</b><small>crptochat-windows-amd64.exe</small></a>
+</div>
+<p class="dim">Também aqui: <a href="RELEASE" download>RELEASE</a> (manifesto com versão e SHA-256)
+   e <a href="RELEASE.sig" download>RELEASE.sig</a> (assinatura Ed25519).</p>
+
+<h2>2. confira antes de rodar</h2>
+<p>Um chat cifrado só vale se o binário for o original. O manifesto <code>RELEASE</code> é assinado, e esta é a
+   chave de assinatura das releases:</p>
+<div class="box">
+  <p><span class="dim">fingerprint:</span><br><span class="fp">SHA256 bbb1 c46e c211 64f5 2da8 8815 ebbe b73c 6795 0bea e86e 79b4 a781 8057 cd77 ce1e</span></p>
+  <p><span class="dim">chave pública:</span><br><span class="fp">oH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=</span></p>
+  <p class="dim">Confira a mesma fingerprint por outro canal (no grupo, com quem te passou o link): se alguém
+     trocasse esta página, trocaria a chave também.</p>
+</div>
+
+<p><b>Linux</b> (troque o nome do arquivo se for ARM64):</p>
+<pre><code><span class="c"># 1) assinatura do manifesto (OpenSSL 3)</span>
+printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAoH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=\n-----END PUBLIC KEY-----\n' &gt; crptochat.pub
+openssl base64 -d -A -in RELEASE.sig -out RELEASE.sig.bin
+openssl pkeyutl -verify -pubin -inkey crptochat.pub -rawin -in RELEASE -sigfile RELEASE.sig.bin
+<span class="c"># deve dizer: Signature Verified Successfully</span>
+
+<span class="c"># 2) SHA-256 do binário contra o manifesto assinado</span>
+grep ' crptochat-linux-amd64$' RELEASE | sha256sum -c -
+<span class="c"># deve dizer: crptochat-linux-amd64: OK</span>
+
+chmod +x crptochat-linux-amd64</code></pre>
+
+<p><b>macOS:</b> o <code>openssl</code> do sistema (LibreSSL) não confere Ed25519. Use o do Homebrew
+   (<code>brew install openssl@3</code>), trocando <code>openssl</code> por
+   <code>$(brew --prefix openssl@3)/bin/openssl</code> nos comandos acima. Para o hash:</p>
+<pre><code>grep ' crptochat-macos-arm64$' RELEASE | shasum -a 256 -c -
+chmod +x crptochat-macos-arm64
+xattr -d com.apple.quarantine crptochat-macos-arm64   <span class="c"># o binário não é assinado pela Apple</span></code></pre>
+
+<p><b>Windows</b> (PowerShell):</p>
+<pre><code>$esperado = (Select-String -Path RELEASE -Pattern ' crptochat-windows-amd64\.exe$').Line.Split(' ')[0]
+$atual = (Get-FileHash crptochat-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code></pre>
+<p class="dim">A assinatura do <code>RELEASE</code> no Windows: rode os comandos de Linux no Git Bash, que já traz o OpenSSL 3.</p>
+
+<div class="box warn"><strong>Se qualquer conferência falhar, não execute o arquivo</strong> e avise no grupo.</div>
+
+<h2>3. conecte</h2>
+<pre><code>./crptochat-linux-amd64 crptochat.acpt.app.br --pin __PIN__</code></pre>
+<p>No Windows: <code>.\crptochat-windows-amd64.exe crptochat.acpt.app.br --pin __PIN__</code></p>
+<div class="box">
+  <p><span class="dim">fingerprint do certificado do servidor (o <code>--pin</code>):</span><br><span class="fp">__PIN__</span></p>
+  <p class="dim">Com o <code>--pin</code>, o cliente recusa qualquer servidor que não seja este, já na primeira conexão.</p>
+</div>
+<ul>
+  <li>Na primeira vez, escolha um <b>nick</b> e uma <b>senha</b>. A senha protege a sua chave neste computador e
+      nunca vai ao servidor. O nick fica preso à sua chave: <b>sem a chave, ninguém (nem você) recupera o nick</b>.</li>
+  <li>Sem cadastro: <code>crptochat crptochat.acpt.app.br -a</code> entra como anônimo, com um nick descartável.</li>
+  <li><code>Esc</code> abre o menu com tudo. Para começar: <code>/join #lobby</code>.</li>
+</ul>
+
+<h2>atualizações</h2>
+<p>Dentro do chat, <code>/update</code> procura versão nova <b>neste site</b>, confere a assinatura do
+   <code>RELEASE</code>, a versão (nunca volta para uma mais antiga) e o SHA-256 do binário, e só então instala.
+   Não precisa de conta nem de token.</p>
+<div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
+   e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.</div>
+
+<h2>4. confira quem é quem</h2>
+<p>O servidor não é confiável por projeto: ele não lê nada, mas poderia tentar se passar por alguém.
+   Por isso, com quem importa:</p>
+<table>
+  <tr><td>/whois nick</td><td>mostra a fingerprint e o número de segurança entre vocês dois</td></tr>
+  <tr><td>/verify nick</td><td>compare o número por outro meio (pessoalmente, ligação) e marque ✓</td></tr>
+  <tr><td>⚠ chave mudou</td><td>as mensagens diretas ficam bloqueadas até vocês conferirem de novo</td></tr>
+</table>
+
+<h2>comandos úteis</h2>
+<table>
+  <tr><td>/msg nick texto</td><td>mensagem direta cifrada</td></tr>
+  <tr><td>/create #canal privado</td><td>canal protegido por senha (a senha nunca vai ao servidor)</td></tr>
+  <tr><td>/send nick arquivo</td><td>arquivo cifrado de ponta a ponta</td></tr>
+  <tr><td>/rec · F2</td><td>mensagem de voz, com disfarce de voz por padrão</td></tr>
+  <tr><td>/ttl nick 10m</td><td>mensagens diretas que somem</td></tr>
+  <tr><td>/search texto · Ctrl+F</td><td>busca no que está na tela (só local)</td></tr>
+  <tr><td>/update</td><td>atualiza pelo site, conferindo assinatura e SHA-256</td></tr>
+  <tr><td>/help</td><td>todo o resto</td></tr>
+</table>
+
+<footer>
+  <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando e o tamanho aproximado
+     das mensagens). Print de tela e cliente adulterado não têm como ser impedidos. O código não passou por
+     auditoria independente.</p>
+</footer>
+</div>
+
+<script>
+  // Destaca o download da plataforma de quem abriu a página (só uma dica: nada sai do navegador).
+  (function () {
+    var ua = navigator.userAgent || "", os = "";
+    if (/Windows/i.test(ua)) os = "windows";
+    else if (/Mac OS X|Macintosh/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = "macos";
+    else if (/Linux/i.test(ua) && !/Android/i.test(ua)) os = /aarch64|arm64/i.test(ua) ? "linux-arm64" : "linux-amd64";
+    var el = os && document.querySelector('.dl[data-os="' + os + '"]');
+    if (el) el.classList.add("mine");
+
+    // Botão "copiar" nos blocos de comando.
+    document.querySelectorAll("pre").forEach(function (pre) {
+      var b = document.createElement("button");
+      b.className = "copy"; b.type = "button"; b.textContent = "copiar";
+      b.addEventListener("click", function () {
+        var text = pre.querySelector("code").innerText;
+        (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+          .then(function () { b.textContent = "copiado"; }, function () { b.textContent = "selecione e copie"; });
+        setTimeout(function () { b.textContent = "copiar"; }, 1500);
+      });
+      pre.appendChild(b);
+    });
+  })();
+</script>
+</body>
+</html>

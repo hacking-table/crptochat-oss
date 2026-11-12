@@ -1,0 +1,260 @@
+# Builds the client binary on GitHub-hosted runners and keeps the latest
+# release of the client repository in sync with main.
+#
+# Repository variable CLIENT_RELEASE_REPO (default hacking-table/crptochat-client)
+# says where releases go. Binaries look for updates on the public site in
+# CLIENT_UPDATE_URL (default https://crptochat.acpt.app.br/downloads/), which must
+# serve the same RELEASE, RELEASE.sig and binaries as the release.
+#
+# Signing (python -m crptochat.update genkey): the public key goes in the
+# repository variable CLIENT_SIGNING_PUBKEY and is embedded in every binary;
+# the private key goes in the secret CLIENT_SIGNING_KEY and is only exposed to
+# the publish step, which signs the RELEASE manifest (version, commit, build
+# time and checksums). Binaries refuse unsigned, wrongly signed or older releases.
+name: release-client
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crptochat/**"
+      - "packaging/**"
+      - "pyproject.toml"
+      - ".github/workflows/release-client.yml"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-client
+  cancel-in-progress: false
+
+env:
+  CLIENT_REPO: ${{ vars.CLIENT_RELEASE_REPO || 'hacking-table/crptochat-client' }}
+  # where the binaries look for updates (public site, no login needed)
+  CLIENT_UPDATE_URL: ${{ vars.CLIENT_UPDATE_URL || 'https://crptochat.acpt.app.br/downloads/' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      pubkey: ${{ steps.key.outputs.pubkey }}
+      built: ${{ steps.key.outputs.built }}
+    steps:
+      # Only the public key is read here; the private key never reaches this job.
+      - id: key
+        env:
+          PUBKEY: ${{ vars.CLIENT_SIGNING_PUBKEY }}
+        run: |
+          set -euo pipefail
+          echo "built=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+          if [ -z "${PUBKEY:-}" ]; then
+            echo "::warning::sem a variável CLIENT_SIGNING_PUBKEY os binários não exigem releases assinadas"
+          elif ! printf '%s' "$PUBKEY" | base64 -d 2>/dev/null | wc -c | grep -qx 32; then
+            echo "::error::CLIENT_SIGNING_PUBKEY não é uma chave pública Ed25519 em base64"
+            exit 1
+          fi
+          echo "pubkey=${PUBKEY:-}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build-${{ matrix.artifact }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    # Linux amd64 and arm64 are mandatory; macOS and Windows are best effort
+    # and never block the release.
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Oldest hosted Ubuntu on purpose: a binary built against an older
+          # glibc also runs on newer distributions, not the other way round.
+          - os: ubuntu-22.04
+            artifact: crptochat-linux-amd64
+            optional: false
+          - os: ubuntu-22.04-arm
+            artifact: crptochat-linux-arm64
+            optional: false
+          - os: macos-latest
+            artifact: crptochat-macos-arm64
+            optional: true
+          - os: windows-latest
+            artifact: crptochat-windows-amd64.exe
+            optional: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Instalar e empacotar
+        shell: bash
+        run: |
+          set -euo pipefail
+          # build identity: commit and time (crptochat --version, update checks),
+          # where to look for updates and which key must sign them
+          {
+            echo "COMMIT = \"${GITHUB_SHA::7}\""
+            echo "BUILT = ${{ needs.prepare.outputs.built }}"
+            echo "REPO = \"${CLIENT_REPO}\""
+            echo "UPDATE_URL = \"${CLIENT_UPDATE_URL}\""
+            echo "PUBKEY = \"${{ needs.prepare.outputs.pubkey }}\""
+          } > crptochat/_build.py
+          python -m pip install -U pip
+          pip install . pyinstaller
+          pyinstaller --noconfirm --clean packaging/crptochat.spec
+          mkdir -p out
+          if [ -f dist/crptochat.exe ]; then
+            mv dist/crptochat.exe "out/${{ matrix.artifact }}"
+          else
+            mv dist/crptochat "out/${{ matrix.artifact }}"
+            chmod +x "out/${{ matrix.artifact }}"
+          fi
+
+      # The binary must really work before it is published: it registers a
+      # nick on a throwaway server and another client decrypts its message.
+      - name: Testar o binário (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: python packaging/smoke_binary.py "out/${{ matrix.artifact }}"
+
+      - name: Testar o binário (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: "\"out/${{ matrix.artifact }}\" --version"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: out/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  publish:
+    name: publish-crptochat-client
+    needs: [prepare, build]
+    # Runs from main or a version tag only; a manual run on another branch
+    # just builds and tests the binaries.
+    if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') }}
+    # signing key and release token live only in this environment, which
+    # only main and v* tags can use and which waits for the maintainer's approval
+    environment: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Baixar artefatos
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Gerar e assinar o manifesto RELEASE
+        env:
+          CLIENT_SIGNING_KEY: ${{ secrets.CLIENT_SIGNING_KEY }}
+          CLIENT_SIGNING_PUBKEY: ${{ needs.prepare.outputs.pubkey }}
+          BUILT: ${{ needs.prepare.outputs.built }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for required in crptochat-linux-amd64 crptochat-linux-arm64; do
+            if [ ! -f "release-assets/$required" ]; then
+              echo "::error::$required não foi gerado; nada foi publicado"
+              exit 1
+            fi
+          done
+          pip install -q "cryptography>=42"
+          VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' crptochat/__init__.py)"
+          # version and build time live inside the signed file, so an old
+          # release cannot be passed off as new (binaries also refuse older builds)
+          python -m crptochat.update manifest "$VERSION" "${GITHUB_SHA::7}" "$BUILT" release-assets/crptochat-* \
+            > release-assets/RELEASE
+          cat release-assets/RELEASE
+          if [ -n "${CLIENT_SIGNING_PUBKEY:-}" ]; then
+            if [ -z "${CLIENT_SIGNING_KEY:-}" ]; then
+              echo "::error::os binários exigem assinatura (CLIENT_SIGNING_PUBKEY) mas falta o secret CLIENT_SIGNING_KEY"
+              exit 1
+            fi
+            python -m crptochat.update sign release-assets/RELEASE > release-assets/RELEASE.sig
+            # a key pair mismatch would make every binary refuse this release
+            python -m crptochat.update verify release-assets/RELEASE release-assets/RELEASE.sig
+          elif [ -n "${CLIENT_SIGNING_KEY:-}" ]; then
+            echo "::warning::CLIENT_SIGNING_KEY existe mas CLIENT_SIGNING_PUBKEY não: a release não será assinada"
+          fi
+
+      - name: Publicar release no repositório do cliente
+        env:
+          GH_TOKEN: ${{ secrets.CLIENT_RELEASE_TOKEN }}
+          REPO: ${{ env.CLIENT_REPO }}
+          CLIENT_SIGNING_PUBKEY: ${{ needs.prepare.outputs.pubkey }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Falta o secret CLIENT_RELEASE_TOKEN no repositório crptochat."
+            echo "Crie um fine-grained PAT com Contents: Read and write só em $REPO"
+            echo "e grave como secret CLIENT_RELEASE_TOKEN neste repositório."
+            exit 1
+          fi
+          VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' crptochat/__init__.py)"
+          TAG="v${VERSION}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$TAG" ]; then
+            echo "::error::a tag ${GITHUB_REF_NAME} não bate com a versão do código ($TAG)"
+            exit 1
+          fi
+          # the installer carries the public key and refuses any release whose
+          # RELEASE.sig or SHA-256 does not match; without a key it is not published
+          rm -f release-assets/install.sh
+          if [ -n "${CLIENT_SIGNING_PUBKEY:-}" ]; then
+            FP="$(python -m crptochat.update fingerprint)"
+            # the README publishes the key's fingerprint for people to compare with
+            # what install.sh prints: refuse to publish if they disagree
+            PUBLISHED="$(sed -n 's/.*`\(SHA256 [0-9a-f ]\{79\}\)`.*/\1/p' README.md | head -n 1)"
+            if [ -z "$PUBLISHED" ]; then
+              echo "::warning::publique no README a fingerprint da chave de assinatura: $FP"
+            elif [ "$PUBLISHED" != "$FP" ]; then
+              echo "::error::a fingerprint no README ($PUBLISHED) não é a da CLIENT_SIGNING_PUBKEY ($FP)"
+              exit 1
+            fi
+            python -m crptochat.update installer packaging/install.sh > release-assets/install.sh
+          else
+            echo "::warning::sem CLIENT_SIGNING_PUBKEY o install.sh não é publicado (ele exige release assinada)"
+          fi
+          cd release-assets
+          sha256sum crptochat-* > SHA256SUMS
+          ls -la
+          NOTES="Cliente crptochat ${TAG}, compilado do commit ${GITHUB_SHA::7} em $(date -u +%Y-%m-%d\ %H:%M) UTC."$'\n\n'"Esta release é atualizada automaticamente a cada mudança no cliente; \`crptochat --version\` mostra o commit do binário."$'\n\n'"Instalar ou atualizar no Linux ou macOS (com o GitHub CLI autenticado; o instalador confere a assinatura de RELEASE e o SHA-256 antes de instalar):"$'\n\n'"    gh release download --repo ${REPO} --pattern install.sh --clobber && sh install.sh"$'\n\n'"Ou baixe o arquivo da sua plataforma, confira com \`sha256sum -c SHA256SUMS\` e dê \`chmod +x\`."
+          assets=(crptochat-* SHA256SUMS RELEASE)
+          [ -f RELEASE.sig ] && assets+=(RELEASE.sig)
+          [ -f install.sh ] && assets+=(install.sh)
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber --repo "$REPO"
+          else
+            gh release create "$TAG" "${assets[@]}" --repo "$REPO" --title "crptochat ${TAG}" --notes "$NOTES"
+          fi
+          # the release is updated in place: drop files a previous run left behind
+          # (a stale signature would make binaries refuse this release)
+          stale=(VERSION.json SHA256SUMS.sig)
+          [ -f RELEASE.sig ] || stale+=(RELEASE.sig)
+          [ -f install.sh ] || stale+=(install.sh)
+          existing="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+          for name in "${stale[@]}"; do
+            if grep -qx "$name" <<<"$existing"; then
+              gh release delete-asset "$TAG" "$name" --repo "$REPO" --yes
+            fi
+          done
+          # Published (not a draft) and marked as the latest, so
+          # /releases/latest and the installer always get the current build.
+          gh release edit "$TAG" --repo "$REPO" --title "crptochat ${TAG}" --notes "$NOTES" \
+            --draft=false --prerelease=false --latest
