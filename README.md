@@ -54,9 +54,9 @@ publicadas sem `CLIENT_SIGNING_PUBKEY` não trazem `install.sh`.
   igual à publicada aqui:
 
   Fingerprint da chave de assinatura das releases:
-  `SHA256 bbb1 c46e c211 64f5 2da8 8815 ebbe b73c 6795 0bea e86e 79b4 a781 8057 cd77 ce1e`
+  `SHA256 aae1 82c8 5665 f874 fab6 a97e 93c5 333b aae8 ce15 7090 f247 c9e7 e2e6 f9d2 3890`
 
-  (chave pública `oH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=`; confira com
+  (chave pública `UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=`; confira com
   `python -m crptochat.update fingerprint`). O workflow de release recusa
   publicar se a `CLIENT_SIGNING_PUBKEY` não bater com essa fingerprint. O
   instalador mostra a fingerprint mesmo sem `openssl`, e, quando há como
