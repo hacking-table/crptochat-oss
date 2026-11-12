@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>crptochat · downloads</title>
-<meta name="description" content="Chat de terminal com criptografia ponta a ponta. Baixe o cliente e conecte em crptochat.acpt.app.br.">
+<meta name="description" content="Chat de terminal com criptografia ponta a ponta, código aberto (MIT). Baixe o cliente, confira a assinatura e conecte em crptochat.acpt.app.br.">
 <style>
   :root {
     --bg: #0b0b14; --panel: #12121f; --line: #2a2a44; --text: #e6e6f0; --dim: #8b8ba7;
@@ -67,6 +67,7 @@
      Canais abertos e privados, mensagens diretas com sigilo por sessão, voz e arquivos.</p>
   <ul class="tags">
     <li>E2EE</li><li>Ed25519 · X25519 · ChaCha20-Poly1305</li><li>nicks presos à chave</li><li>acesso anônimo</li>
+    <li>código aberto · MIT</li>
   </ul>
 </header>
 
@@ -81,19 +82,39 @@
   <a class="dl" data-os="windows" href="crptochat-windows-amd64.exe" download>
     <span class="badge">▶ recomendado para você</span><b>Windows x64</b><small>crptochat-windows-amd64.exe</small></a>
 </div>
-<p class="dim">Também aqui: <a href="RELEASE" download>RELEASE</a> (manifesto com versão e SHA-256)
-   e <a href="RELEASE.sig" download>RELEASE.sig</a> (assinatura Ed25519).</p>
+<p class="dim">Também aqui: <a href="RELEASE" download>RELEASE</a> (manifesto com versão e SHA-256, assinado),
+   <a href="RELEASE.sig" download>RELEASE.sig</a> (assinatura Ed25519), <a href="SHA256SUMS" download>SHA256SUMS</a>
+   e <a href="install.sh" download>install.sh</a>. Não precisa de conta nem de login para baixar.</p>
+<p><b>Linux e macOS, num comando</b> (o instalador confere a assinatura e o hash antes de instalar):</p>
+<pre><code>curl -fsSLO --proto '=https' https://crptochat.acpt.app.br/downloads/install.sh &amp;&amp; sh install.sh</code></pre>
 
-<h2>2. confira antes de rodar</h2>
-<p>Um chat cifrado só vale se o binário for o original. O manifesto <code>RELEASE</code> é assinado, e esta é a
-   chave de assinatura das releases:</p>
+<h2>2. verifique o que você baixa</h2>
+<p>Um chat cifrado só vale se o binário for o original. Toda release é <b>assinada com Ed25519</b>: o manifesto
+   <code>RELEASE</code> traz a versão e o SHA-256 de cada binário, e o <code>RELEASE.sig</code> é a assinatura dele.
+   Esta é a chave de assinatura das releases:</p>
 <div class="box">
   <p><span class="dim">fingerprint:</span><br><span class="fp">SHA256 bbb1 c46e c211 64f5 2da8 8815 ebbe b73c 6795 0bea e86e 79b4 a781 8057 cd77 ce1e</span></p>
   <p><span class="dim">chave pública:</span><br><span class="fp">oH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=</span></p>
-  <p class="dim">Confira a mesma fingerprint por outro canal (no grupo, com quem te passou o link): se alguém
-     trocasse esta página, trocaria a chave também.</p>
+  <p class="dim">Confira a mesma fingerprint por outro canal: no README do
+     <a href="https://github.com/hacking-table/crptochat-oss">repositório do código</a> ou com quem te passou o link.
+     Se alguém trocasse esta página, trocaria a chave também.</p>
 </div>
+<ul>
+  <li>O <code>install.sh</code> confere a assinatura do <code>RELEASE</code> com essa chave e o SHA-256 do binário
+      contra o manifesto assinado; qualquer divergência cancela a instalação.</li>
+  <li>Os mesmos arquivos ficam espelhados nas releases públicas em
+      <a href="https://github.com/hacking-table/crptochat-client/releases">github.com/hacking-table/crptochat-client/releases</a>.
+      Baixar dos dois lugares e comparar é uma conferência a mais: quem quisesse enganar você teria de alterar os dois.</li>
+</ul>
 
+<p><b>Conferência rápida do hash</b>, com o <code>SHA256SUMS</code> na mesma pasta do binário:</p>
+<pre><code>sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># Linux; no macOS: shasum -a 256 -c --ignore-missing SHA256SUMS</span>
+<span class="c"># deve dizer: crptochat-linux-amd64: OK</span></code></pre>
+<p class="dim">O <code>SHA256SUMS</code> não é assinado: ele prova que o download não corrompeu, não quem publicou.
+   Para isso, confira o <code>SHA256SUMS</code> do site com o do espelho no GitHub, ou faça a conferência completa
+   abaixo, que usa o <code>RELEASE</code> assinado.</p>
+
+<p><b>Conferência completa</b> (assinatura + hash):</p>
 <p><b>Linux</b> (troque o nome do arquivo se for ARM64):</p>
 <pre><code><span class="c"># 1) assinatura do manifesto (OpenSSL 3)</span>
 printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAoH5pJyULtqqayVJ0sOWdrSbSOj+NqlNGnNkPd05yOYE=\n-----END PUBLIC KEY-----\n' &gt; crptochat.pub
@@ -137,9 +158,10 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
 </ul>
 
 <h2>atualizações</h2>
-<p>Dentro do chat, <code>/update</code> procura versão nova <b>neste site</b>, confere a assinatura do
-   <code>RELEASE</code>, a versão (nunca volta para uma mais antiga) e o SHA-256 do binário, e só então instala.
-   Não precisa de conta nem de token.</p>
+<p>Dentro do chat, <code>/update</code> procura versão nova <b>neste site</b> e só instala uma release
+   <b>assinada</b> com a chave acima e de <b>versão maior</b> que a sua (nunca volta para uma mais antiga, nem
+   reinstala a mesma). Antes de trocar o binário, confere o SHA-256 dele contra o manifesto assinado.
+   Não precisa de conta nem de login.</p>
 <div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
    e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.</div>
 
@@ -164,10 +186,26 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
   <tr><td>/help</td><td>todo o resto</td></tr>
 </table>
 
+<h2>código aberto</h2>
+<p>O crptochat é software livre, sob a <b>licença MIT</b>. Todo o código (cliente, servidor e este instalador)
+   está em <a href="https://github.com/hacking-table/crptochat-oss">github.com/hacking-table/crptochat-oss</a>:
+   dá para ler, auditar, compilar você mesmo e rodar o seu próprio servidor.</p>
+<p>Quer melhorar algo? Faça um fork e mande um pull request. Antes, leia o
+   <a href="https://github.com/hacking-table/crptochat-oss/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>
+   (como rodar os testes e o que é esperado de um PR).</p>
+
+<h2>segurança</h2>
+<p>Achou uma vulnerabilidade? <b>Reporte em privado</b>, pelo
+   <a href="https://github.com/hacking-table/crptochat-oss/security/advisories/new">Private Vulnerability Reporting</a>
+   do GitHub. Os detalhes (o que entra no escopo, prazos e como acompanhamos) estão no
+   <a href="https://github.com/hacking-table/crptochat-oss/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+<div class="box warn"><strong>Por favor, não abra issue pública com vulnerabilidade.</strong> Uma issue aberta
+   expõe o problema a todo mundo antes de existir correção.</div>
+
 <footer>
   <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando e o tamanho aproximado
-     das mensagens). Print de tela e cliente adulterado não têm como ser impedidos. O código não passou por
-     auditoria independente.</p>
+     das mensagens). Print de tela e cliente adulterado não têm como ser impedidos. O código ainda não passou por
+     auditoria independente, mas é aberto: revise e reporte o que encontrar.</p>
 </footer>
 </div>
 
