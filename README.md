@@ -373,15 +373,17 @@ Tudo o que o menu faz também existe como comando:
 | `/list` | lista os canais |
 | `/create #canal` | cria um canal aberto |
 | `/create #canal privado` | cria um canal privado (pede a senha em um diálogo) |
+| `/create #canal privado gerar` | cria um canal privado com uma senha aleatória forte (veja *Convites com a chave*) |
 | `/join #canal` | entra em um canal (pede a senha se for privado) |
 | `/leave` | sai do canal atual ou fecha a conversa direta |
 | `/msg nick texto` | mensagem direta |
 | `/query nick` | abre uma janela de conversa direta |
 | `/mode #canal +t 1h\|-t`, `/ttl nick 10m\|off` | mensagens temporárias no canal e na conversa direta |
 | `/mode #canal +h 7\|-h` | histórico cifrado por 7 dias num canal privado (desligado por padrão) |
-| `/chanpass #canal` | troca a senha do canal privado e gira a chave (só o dono) |
+| `/chanpass #canal [gerar]` | troca a senha do canal privado e gira a chave (só o dono); `gerar` sorteia uma senha forte |
+| `/invite nick` | convida; em canal privado a chave do canal vai junto, cifrada de ponta a ponta |
 | `/rec`, `/play [n]`, `/stop` | grava/envia mensagem de voz, ouve, interrompe |
-| `/voice mascarada\|natural` | liga/desliga o disfarce de voz (padrão: ligado) |
+| `/voicemask on\|off` | liga/desliga o disfarce de voz (padrão: ligado) |
 | `/send nick\|#canal arquivo [--p2p]` | arquivo pelo servidor (padrão) ou direto, P2P |
 | `/accept [id]`, `/reject [id]` | aceita ou recusa um arquivo |
 | `/who`, `/whois nick`, `/fp` | fingerprints e número de segurança |
@@ -439,6 +441,26 @@ Só operadores e o dono mudam (`/policy nome valor` ou `Esc` → *Políticas do 
 O servidor aplica essas regras sem ler as mensagens: ele só olha quem envia,
 com que frequência e o tamanho do envelope cifrado. Por isso não existe
 filtro de palavras.
+
+### Convites com a chave
+
+Senha de canal escolhida por gente costuma ser fraca, e quem controla o
+servidor pode tentar adivinhá-la offline a partir do verificador que ele
+guarda. Duas ferramentas resolvem isso:
+
+- **Senha gerada:** `/create #canal privado gerar` (ou `/chanpass #canal
+  gerar`) sorteia uma senha de 128 bits, como `k3qa-7mzt-…`, mostrada uma
+  única vez. Adivinhar está fora de alcance, com ou sem o verificador.
+- **Convite com a chave:** `/invite nick` num canal privado manda, junto do
+  convite e cifrada de ponta a ponta, a chave de entrada e as chaves do
+  canal (nunca a senha). A pessoa digita `/join #canal` e entra sem precisar
+  de senha. A chave fica só na memória e é usada uma vez; se a senha mudar
+  antes, o `/join` volta a pedir a senha.
+
+Assim ninguém precisa decorar nem repassar a senha: o dono gera, guarda
+num cofre se quiser, e convida as pessoas pelo próprio chat. A chave só vai
+para quem está online e com cliente 1.11.0 ou mais novo; para os outros, a
+senha continua passando por outro meio.
 
 ### Amigos, ausência e temas
 
@@ -731,8 +753,10 @@ Voz é biometria, então o áudio recebe proteções que o texto não precisa:
 - **Sem exposição de IP entre usuários**: ao contrário dos arquivos P2P, o
   áudio trafega pelo relay; quem ouve não descobre o seu endereço.
 
-`/voice natural` desliga o disfarce (a barra de gravação avisa `VOZ NATURAL`)
-e `/voice mascarada` religa; a escolha é lembrada.
+`/voicemask off` desliga o disfarce (a barra de gravação avisa `VOZ NATURAL`)
+e `/voicemask on` religa; a escolha é lembrada. (O antigo `/voice
+mascarada|natural` continua funcionando, exceto dentro de um canal onde
+alguém se chame assim: lá `/voice nick` é sempre o cargo de voz.)
 
 O que o disfarce **não** faz: não esconde o que é dito, nem vocabulário,
 sotaque, ritmo de fala ou um som de fundo alto e característico. Ele impede
@@ -741,7 +765,7 @@ análise forense dedicada. Para o que for realmente sensível, texto é mais seg
 
 Gravação e reprodução usam o que a máquina tiver: `ffmpeg`/`ffplay`
 (recomendado: Opus, ~2,5 KiB/s), ou `parecord`/`paplay`, `pw-record`/`pw-play`,
-`arecord`/`aplay`, `mpv`. Sem ffmpeg só é possível enviar com `/voice natural`,
+`arecord`/`aplay`, `mpv`. Sem ffmpeg só é possível enviar com `/voicemask off`,
 em WAV 8 kHz (qualidade de telefone). Para um dispositivo específico, defina o comando:
 
 ```bash
@@ -896,7 +920,8 @@ aproximado (arredondado para 64 bytes) das mensagens, nomes dos canais.
   (`/whois`, `/verify`) para descartar um servidor que troque chaves já no
   primeiro encontro; depois disso, qualquer troca é detectada e bloqueada.
 - **Senha de canal fraca pode ser quebrada offline** por quem controla o
-  servidor, a partir do verificador. Use senha longa.
+  servidor, a partir do verificador. Use `gerar` e convide com `/invite`
+  (veja *Convites com a chave*), ou uma senha longa.
 - Mensagens de canal são assinadas, então não há negação plausível entre membros.
 - Sem entrega offline para conversas diretas: só recebe quem está conectado.
   Em canais privados com histórico ligado, quem entra depois vê as mensagens

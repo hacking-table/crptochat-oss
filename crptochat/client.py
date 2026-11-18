@@ -47,12 +47,13 @@ from .protocol import (
 from .store import Identity, Store
 
 MAX_TEXT = 4000
-CLIENT_CAPS = ["dmr", "file2"]   # advertised to peers inside direct envelopes
+CLIENT_CAPS = ["dmr", "file2", "ci"]   # advertised to peers inside direct envelopes
 AUDIO_CHUNK = 20_000        # raw bytes per relayed envelope
 MAX_AUDIO = 1_500_000
 MAX_AUDIO_PARTIAL = 8       # clips being received at the same time
 AUDIO_BUCKET = 4            # clips are padded to a multiple of this many envelopes
 MAX_PENDING = 200
+MAX_INVITES = 20            # channel keys received with invitations, kept in RAM
 
 
 class ChatError(Exception):
@@ -193,6 +194,9 @@ class ChatClient:
         self._kicked = ""
         self._tasks: set[asyncio.Task] = set()
         self._audio_rx: dict[tuple, dict] = {}
+        # Keys of private channels handed to us, end to end, by whoever invited
+        # us (see invite): {chan: {"keys": (auth, psk, hkey), "by": nick}}. RAM only.
+        self.invites: dict[str, dict] = {}
 
     # ------------------------------------------------------------- helpers
 
@@ -598,6 +602,10 @@ class ChatClient:
             raise ChatError(f"você já está em {chan}")
         info = await self.request({"t": "chaninfo", "chan": chan})
         auth = psk = hkey = None
+        invited = None
+        if info.get("private") and not _keys and passphrase is None and chan in self.invites:
+            invited = self.invites[chan]
+            _keys = invited["keys"]
         if info.get("private"):
             if _keys and _keys[0]:
                 auth, psk, hkey = (tuple(_keys) + (None,))[:3]
@@ -630,7 +638,16 @@ class ChatClient:
             if isinstance(history, list) and history and ch.hkey:
                 self.spawn(self._load_history(ch, history[:1000]))
 
-        await self.request({"t": "join", "chan": chan, "auth": b64e(auth) if auth else None}, hook=hook)
+        try:
+            await self.request({"t": "join", "chan": chan, "auth": b64e(auth) if auth else None}, hook=hook)
+        except ChatError as exc:
+            if invited is not None and "senha" in str(exc):
+                # the key from the invitation is stale (password changed since): ask for it
+                self.invites.pop(chan, None)
+                raise NeedPassphrase(chan) from exc
+            raise
+        if invited is not None:
+            self.invites.pop(chan, None)
 
     async def leave(self, chan: str) -> None:
         ch = self.channels.get(chan)
@@ -810,6 +827,8 @@ class ChatClient:
             return
         if kind == "sk":
             self._on_sender_key(peer, inner)
+        elif kind == "ci":
+            self._on_channel_keys(peer, inner)
         elif kind == "skr":
             # "please send me your channel key again" (after accepting a new key)
             ch = self.channels.get(inner.get("chan"))
@@ -1041,7 +1060,38 @@ class ChatClient:
         return (await self.request({"t": "policy", "chan": chan, "set": changes}))["policy"]
 
     async def invite(self, chan: str, nick: str) -> dict:
-        return await self.request({"t": "invite", "chan": chan, "nick": nick})
+        """Invite someone. In a private channel, the channel's keys go along,
+        end to end, so they can join without anyone telling them the password
+        (and without the password itself ever being sent: only what it derives)."""
+        reply = await self.request({"t": "invite", "chan": chan, "nick": nick})
+        ch = self.channels.get(chan)
+        reply["keys_sent"] = False
+        if ch and ch.private and ch.auth and ch.psk and reply.get("online"):
+            try:
+                peer = self._usable(await self.resolve(nick))
+                if await self.peer_supports(peer, "ci"):
+                    inner = {"k": "ci", "chan": chan, "a": b64e(ch.auth), "p": b64e(ch.psk)}
+                    if ch.hkey:
+                        inner["h"] = b64e(ch.hkey)
+                    await self.request(self._direct_frame(peer, inner))
+                    reply["keys_sent"] = True
+            except (ChatError, CryptoError):
+                pass
+        return reply
+
+    def _on_channel_keys(self, peer: Peer, inner: dict) -> None:
+        chan = inner.get("chan")
+        if not valid_chan(chan):
+            return
+        try:
+            keys = (b64d(inner["a"], 32), b64d(inner["p"], 32), b64d(inner["h"], 32) if inner.get("h") else None)
+        except (ProtocolError, KeyError):
+            return
+        self.invites.pop(chan, None)
+        self.invites[chan] = {"keys": keys, "by": peer.nick}
+        while len(self.invites) > MAX_INVITES:
+            del self.invites[next(iter(self.invites))]
+        self.emit("invite_keys", chan=chan, by=peer.nick)
 
     async def server_kick(self, nick: str) -> dict:
         return await self.request({"t": "gkick", "nick": nick})

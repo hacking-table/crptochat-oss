@@ -11,6 +11,7 @@ Primitives (all from the `cryptography` library, no home-made ciphers):
 
 from __future__ import annotations
 
+import base64
 import functools
 import hashlib
 import hmac
@@ -145,6 +146,14 @@ def channel_secrets(passphrase: str, salt: bytes) -> tuple[bytes, bytes, bytes]:
     master = scrypt_key(passphrase, salt)
     return (hkdf(master, b"crptochat-chan-auth-v1"), hkdf(master, b"crptochat-chan-psk-v1"),
             hkdf(master, b"crptochat-chan-history-v1"))
+
+
+def random_passphrase() -> str:
+    """A channel password nobody has to invent: 128 random bits in base32,
+    in groups of 4 (e.g. ``k3qa-7mzt-...``). Too long to brute-force from the
+    verifier the server keeps, unlike a password a person would pick."""
+    raw = base64.b32encode(os.urandom(20)).decode().lower().rstrip("=")[:26]   # 26 * 5 = 130 bits
+    return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
 def channel_keys(passphrase: str, salt: bytes) -> tuple[bytes, bytes]:

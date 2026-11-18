@@ -312,7 +312,7 @@ def test_voice_messages(home, monkeypatch):
                 await pilot.pause(0.3)
                 assert not app.recorder.active
                 assert any("ffmpeg" in l for l in lines(app, "#lobby"))
-                await type_line(pilot, "/voice natural")  # ...until the user opts out
+                await type_line(pilot, "/voicemask off")  # ...until the user opts out
 
             # channel: F2 starts, Enter on an empty line sends
             await pilot.press("f2")
@@ -358,14 +358,14 @@ def test_voice_messages(home, monkeypatch):
                                                -math.sin(2 * math.pi * freq * i / 16000)) for i, v in enumerate(pcm)))
                 assert max(range(100, 1000, 5), key=power) not in range(425, 460)
 
-            # /voice natural is an explicit, remembered choice
-            await type_line(pilot, "/voice mascarada")
-            await type_line(pilot, "/voice natural")
+            # /voicemask off is an explicit, remembered choice (the old /voice words still work)
+            await type_line(pilot, "/voicemask on")
+            await type_line(pilot, "/voicemask off")
             assert not app.voice_mask and load_prefs()["voice"] == "natural"
             await type_line(pilot, "/voice mascarada")
             assert app.voice_mask and load_prefs()["voice"] == "mask"
             if not has_ffmpeg:
-                await type_line(pilot, "/voice natural")
+                await type_line(pilot, "/voicemask off")
 
             # Esc cancels a recording instead of opening the menu
             await type_line(pilot, "/rec")

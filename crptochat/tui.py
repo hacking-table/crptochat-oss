@@ -144,12 +144,13 @@ HELP = [
     ("/list", "lista os canais do servidor"),
     ("/create #canal", "cria um canal aberto"),
     ("/create #canal privado", "cria um canal privado protegido por senha"),
+    ("/create #canal privado gerar", "idem, com uma senha aleatória forte (128 bits)"),
     ("/join #canal", "entra em um canal (pede a senha se for privado)"),
     ("/leave", "sai do canal atual / fecha a conversa"),
     ("/msg nick texto", "mensagem direta cifrada"),
     ("/query nick", "abre uma conversa direta"),
     ("/rec  (ou F2)", "grava uma mensagem de voz; /rec ou Enter envia, Esc cancela"),
-    ("/voice [mascarada|natural]", "disfarce de voz nos áudios (padrão: mascarada)"),
+    ("/voicemask [on|off]", "disfarce de voz nos áudios (padrão: ligado)"),
     ("/play [n]  /stop", "ouve o áudio n (ou o mais recente); /stop interrompe"),
     ("/send nick|#canal arquivo", "envia arquivo pelo servidor, cifrado de ponta a ponta"),
     ("/send nick arquivo --p2p", "envia direto (P2P): mais rápido na rede local, mas expõe seu IP"),
@@ -163,9 +164,9 @@ HELP = [
     ("/policy [nome valor]", "políticas: noanon moderated invite textonly slow limit ttl"),
     ("/mode #canal +t 1h | -t", "mensagens temporárias no canal (também +m +i +a +x)"),
     ("/mode #canal +h 7 | -h", "histórico cifrado por N dias (só canal privado; desligado por padrão)"),
-    ("/chanpass #canal", "troca a senha do canal privado (gira a chave; dono)"),
+    ("/chanpass #canal [gerar]", "troca a senha do canal privado (gira a chave; dono)"),
     ("/ttl nick 10m | off", "mensagens temporárias numa conversa direta"),
-    ("/invite /owner nick  /roles /bans", "convida, transfere o canal, lista cargos e bans"),
+    ("/invite /owner nick  /roles /bans", "convida (em canal privado a chave vai junto), transfere o canal, lista cargos e bans"),
     ("/gkick /gban /gunban nick", "moderação do servidor (só equipe)"),
     ("/who", "membros do canal e suas fingerprints"),
     ("/whois nick", "fingerprint e número de segurança de um usuário"),
@@ -177,7 +178,9 @@ HELP = [
     ("/clear", "limpa a tela atual"),
     ("/quit", "sai"),
 ]
-COMMANDS = ["/help", "/menu", "/list", "/create", "/join", "/leave", "/msg", "/query", "/send", "/rec", "/voice", "/play", "/stop", "/accept",
+GENERATE = ("gerar", "gera", "random", "aleatoria", "aleatória")
+
+COMMANDS = ["/help", "/menu", "/list", "/create", "/join", "/leave", "/msg", "/query", "/send", "/rec", "/voicemask", "/play", "/stop", "/accept",
             "/reject", "/away", "/back", "/friend", "/friends", "/theme", "/update", "/mode", "/chanpass", "/ttl", "/op", "/deop", "/voice", "/devoice",
             "/kick", "/ban", "/unban", "/bans", "/roles", "/policy", "/invite", "/owner", "/gkick", "/gban", "/gunban",
             "/who", "/whois", "/verify", "/unverify", "/fp", "/passwd", "/search", "/notify", "/clear", "/quit"]
@@ -1092,6 +1095,10 @@ class ChatApp(App):
         self.bell()
         self.refresh_all()
 
+    def ev_invite_keys(self, chan: str, by: str) -> None:
+        self.note(f"{by} mandou a chave de {chan} (cifrada de ponta a ponta): /join {chan} entra sem senha", "ok")
+        self.bell()
+
     def ev_invited(self, chan: str, by: str) -> None:
         self.note(f"{by} convidou você para {chan}: digite /join {chan}", "ok")
         self.bell()
@@ -1356,7 +1363,7 @@ class ChatApp(App):
             raise ChatError("abra um canal ou uma conversa direta antes de gravar")
         if self.voice_mask and not audio.can_mask():
             raise ChatError("a proteção de voz precisa do ffmpeg instalado; instale-o ou use "
-                            "/voice natural (expõe a sua voz verdadeira)")
+                            "/voicemask off (expõe a sua voz verdadeira)")
         try:
             await self.recorder.start()
         except AudioError as exc:
@@ -1409,18 +1416,32 @@ class ChatApp(App):
         else:
             self.note("proteção de voz DESATIVADA: quem ouvir pode reconhecer a sua voz", "warn")
 
-    def cmd_voice(self, rest: str):
-        choice = rest.lower()
-        if choice in ("mascarada", "mask", "on", "robo", "robô"):
+    MASK_ON = ("mascarada", "mask", "on", "robo", "robô", "ligar", "ligado")
+    MASK_OFF = ("natural", "off", "desligar", "desligado")
+
+    def cmd_voicemask(self, rest: str):
+        choice = rest.strip().lower()
+        if choice in self.MASK_ON:
             self.set_voice(True)
-        elif choice in ("natural", "off"):
+        elif choice in self.MASK_OFF:
             self.set_voice(False)
-        elif choice and self.buffers[self.current].kind == "chan":
-            # IRC-style: /voice nick gives someone voice in the channel
-            return self._role(rest, "voice", "/voice nick")
         else:
             self.note(f"proteção de voz: {'mascarada' if self.voice_mask else 'natural'} "
-                      "· uso: /voice mascarada | /voice natural · num canal, /voice nick dá voz")
+                      "· uso: /voicemask on (mascarada) | /voicemask off (natural)")
+
+    def cmd_voice(self, rest: str):
+        """In a channel, IRC-style: /voice nick gives someone voice. The old
+        /voice mascarada|natural still switches the disguise, unless someone
+        in the channel is actually called that (then it is the role)."""
+        word = rest.strip().split()[0] if rest.strip() else ""
+        ch = self.client.channels.get(self.current) if self.buffers[self.current].kind == "chan" else None
+        if word and ch and word.lower() in ch.members:
+            return self._role(word, "voice", "/voice nick")
+        if word.lower() in self.MASK_ON + self.MASK_OFF:
+            return self.cmd_voicemask(word)
+        if word and ch:
+            return self._role(rest, "voice", "/voice nick")
+        self.note("uso: /voice nick (num canal, dá voz) · o disfarce de voz agora é /voicemask on|off")
 
     async def menu_voice(self) -> None:
         now = "mascarada" if self.voice_mask else "natural"
@@ -1640,9 +1661,18 @@ class ChatApp(App):
             self.add_line(None, Text.assemble(("               ", ""), (f"{label:<16}", YELLOW), (nick, nick_color(nick))))
 
     async def cmd_invite(self, rest: str):
-        reply = await self.client.invite(self._chan(), self._nick(rest, "/invite nick"))
-        self.note(f"{reply['nick']} convidado para {self.current}"
-                  + ("" if reply.get("online") else " (está offline; poderá entrar quando voltar)"), "ok")
+        chan = self._chan()
+        reply = await self.client.invite(chan, self._nick(rest, "/invite nick"))
+        ch = self.client.channels.get(chan)
+        if reply.get("keys_sent"):
+            extra = " · a chave do canal foi junto, cifrada de ponta a ponta: não precisa passar a senha"
+        elif ch and ch.private and reply.get("online"):
+            extra = " · o cliente dele não recebe a chave pelo convite (versão antiga): passe a senha por outro meio"
+        elif ch and ch.private:
+            extra = " (está offline: passe a senha por outro meio, ou convide de novo quando ele voltar)"
+        else:
+            extra = "" if reply.get("online") else " (está offline; poderá entrar quando voltar)"
+        self.note(f"{reply['nick']} convidado para {chan}{extra}", "ok")
 
     @staticmethod
     def _policy_state(value, name: str = "") -> str:
@@ -1939,14 +1969,19 @@ class ChatApp(App):
 
     async def cmd_chanpass(self, rest: str):
         """Owner: new password → new key. The old history goes away unless re-encrypted."""
-        chan = rest.split()[0].lower() if rest.split() else self._chan()
+        words = [w for w in rest.split() if w.lower() not in GENERATE]
+        chan = words[0].lower() if words else self._chan()
         ch = self.client.channels.get(chan)
         if not ch or not ch.private:
-            raise ChatError("uso: /chanpass #canal (só canais privados, só o dono)")
-        fut = asyncio.get_running_loop().create_future()
-        self.push_screen(PassScreen(f"nova senha de {chan}", True), lambda v: fut.done() or fut.set_result(v))
-        password = await fut
-        self.input.focus()
+            raise ChatError("uso: /chanpass #canal [gerar] (só canais privados, só o dono)")
+        generated = any(word.lower() in GENERATE for word in rest.split())
+        if generated:
+            password = crypto.random_passphrase()
+        else:
+            fut = asyncio.get_running_loop().create_future()
+            self.push_screen(PassScreen(f"nova senha de {chan}", True), lambda v: fut.done() or fut.set_result(v))
+            password = await fut
+            self.input.focus()
         if not password:
             return
         reencrypt = False
@@ -1963,6 +1998,8 @@ class ChatApp(App):
         self.note(f"senha de {chan} trocada: chave nova; os outros membros saíram e precisam da senha nova"
                   + (f" · {kept} mensagens do histórico re-cifradas" if reencrypt else
                      " · histórico antigo apagado" if self.history_days(chan) else ""), "ok", chan)
+        if generated:
+            self._show_generated(chan, password)
 
     async def cmd_ttl(self, rest: str):
         parts = rest.split()
@@ -2247,10 +2284,22 @@ class ChatApp(App):
             raise ChatError("nome de canal inválido: use #nome (minúsculas, números, _ e -)")
         if len(parts) > 1:
             if parts[1].lower() not in ("privado", "private", "priv", "-p"):
-                raise ChatError("uso: /create #canal [privado]")
+                raise ChatError("uso: /create #canal [privado [gerar]]")
+            if len(parts) > 2 and parts[2].lower() in GENERATE:
+                return self._create_generated(chan)
             self.ask_pass(f"defina a senha de {chan}", True, lambda pw: self.client.create(chan, pw))
             return None
         return self.client.create(chan)
+
+    async def _create_generated(self, chan: str) -> None:
+        password = crypto.random_passphrase()
+        await self.client.create(chan, password)
+        self._show_generated(chan, password)
+
+    def _show_generated(self, chan: str, password: str) -> None:
+        self.note(f"senha gerada para {chan}: {password}", "warn", chan)
+        self.note("ela só aparece agora. Guarde num cofre de senhas, ou nem guarde: convide as pessoas com "
+                  "/invite nick, que a chave do canal vai cifrada de ponta a ponta, sem precisar da senha", "ok", chan)
 
     async def do_join(self, chan: str) -> None:
         try:
