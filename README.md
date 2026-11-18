@@ -1018,7 +1018,17 @@ O que isso garante e o que não:
 ### O que o servidor ainda enxerga
 
 Metadados: IPs, nicks online, quem está em qual canal, horário e tamanho
-aproximado (arredondado para 64 bytes) das mensagens, nomes dos canais.
+aproximado das mensagens, nomes dos canais.
+
+Sobre o tamanho: até 4 KiB, todo conteúdo cifrado é completado até a próxima
+potência de 2 (64, 128, 256 … 4096 bytes), então um "ok" e uma frase de 50
+letras têm exatamente o mesmo tamanho no fio, e um parágrafo só se distingue
+de outro pela faixa. Acima de 4 KiB (áudio, textos colados enormes) o
+arredondamento é de 64 bytes, para não dobrar o tráfego pesado (1.15.0+;
+clientes antigos leem os dois formatos). O horário de cada envelope continua
+visível: não há atraso aleatório nem tráfego de cobertura, que custariam
+latência e banda sem esconder quem conversa com quem de um servidor que vê
+as conexões.
 
 ### Limites que vale conhecer
 
