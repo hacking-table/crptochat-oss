@@ -151,6 +151,10 @@ HELP = [
     ("/query nick", "abre uma conversa direta"),
     ("/rec  (ou F2)", "grava uma mensagem de voz; /rec ou Enter envia, Esc cancela"),
     ("/voicemask [on|off]", "disfarce de voz nos áudios (padrão: ligado)"),
+    ("/reply [nick] texto", "responde à última mensagem (de nick)"),
+    ("/react [nick] 👍", "reage à última mensagem (+1, ok, kkk, <3, fogo... viram emoji)"),
+    ("/edit texto  /del", "corrige ou apaga a sua última mensagem nesta janela"),
+    ("/receipts on|off", "confirmação de leitura nas conversas diretas (padrão: desligada)"),
     ("/play [n]  /stop", "ouve o áudio n (ou o mais recente); /stop interrompe"),
     ("/send nick|#canal arquivo", "envia arquivo pelo servidor, cifrado de ponta a ponta"),
     ("/send nick arquivo --p2p", "envia direto (P2P): mais rápido na rede local, mas expõe seu IP"),
@@ -179,9 +183,11 @@ HELP = [
     ("/quit", "sai"),
 ]
 GENERATE = ("gerar", "gera", "random", "aleatoria", "aleatória")
+REACTIONS = {"+1": "👍", "-1": "👎", "ok": "👌", "kkk": "😂", "haha": "😂", "<3": "❤️", "coracao": "❤️",
+             "coração": "❤️", "fogo": "🔥", "triste": "😢", "uau": "😮", "olhos": "👀", "check": "✅"}
 
 COMMANDS = ["/help", "/menu", "/list", "/create", "/join", "/leave", "/msg", "/query", "/send", "/rec", "/voicemask", "/play", "/stop", "/accept",
-            "/reject", "/away", "/back", "/friend", "/friends", "/theme", "/update", "/mode", "/chanpass", "/ttl", "/op", "/deop", "/voice", "/devoice",
+            "/reject", "/reply", "/react", "/edit", "/del", "/receipts", "/away", "/back", "/friend", "/friends", "/theme", "/update", "/mode", "/chanpass", "/ttl", "/op", "/deop", "/voice", "/devoice",
             "/kick", "/ban", "/unban", "/bans", "/roles", "/policy", "/invite", "/owner", "/gkick", "/gban", "/gunban",
             "/who", "/whois", "/verify", "/unverify", "/fp", "/passwd", "/search", "/notify", "/clear", "/quit"]
 
@@ -232,6 +238,34 @@ class Buffer:
         self.expiry: dict[int, float] = {}     # id(line) -> when it disappears
         self.unread = 0
         self.alert = False
+        # messages that can be replied to, reacted to, edited or deleted, by id
+        self.msgs: dict[str, dict] = {}
+        self.to_read: list[str] = []           # ids of received direct messages not yet seen
+
+    def remember(self, mid: str, entry: dict) -> None:
+        self.msgs.pop(mid, None)
+        self.msgs[mid] = entry
+        while len(self.msgs) > 3000:
+            del self.msgs[next(iter(self.msgs))]
+
+    def last(self, mine: bool, nick: str | None = None) -> tuple[str, dict] | None:
+        """Most recent message still on screen, mine or someone else's (optionally a given nick)."""
+        on_screen = {id(line) for line in self.lines}
+        for mid, entry in reversed(list(self.msgs.items())):
+            if entry["mine"] != mine or entry.get("deleted") or id(entry["line"]) not in on_screen:
+                continue
+            if nick is None or entry["nick"].lower() == nick.lower():
+                return mid, entry
+        return None
+
+    def replace(self, old: Text, new: Text) -> bool:
+        for index, line in enumerate(self.lines):
+            if line is old:
+                self.lines[index] = new
+                if id(old) in self.expiry:
+                    self.expiry[id(new)] = self.expiry.pop(id(old))
+                return True
+        return False
 
     def purge(self, now: float) -> int:
         """Drop lines whose time is up; returns how many were removed."""
@@ -584,6 +618,7 @@ class ChatApp(App):
         super().__init__()
         self._banner: list[Text] = []
         self.client: ChatClient = client_factory(self.engine_event)
+        self.client.receipts = load_prefs().get("receipts") is True
         self.autojoin = autojoin or []
         self.buffers: dict[str, Buffer] = {CONSOLE: Buffer(CONSOLE)}
         self.current = CONSOLE
@@ -866,6 +901,7 @@ class ChatApp(App):
         buf = self.buffers[name]
         buf.unread, buf.alert = 0, False
         self.refresh_all(refill=True)
+        self.flush_reads(name)
         self.input.focus()
 
     @property
@@ -915,14 +951,65 @@ class ChatApp(App):
         self.add_line(buffer, Text.assemble(self.stamp(), ("        ◈ ", color), (clean(text), color)),
                       alert=level in ("warn", "err"))
 
-    def chat_line(self, name: str, nick: str, text: str, mine: bool, ttl: int = 0) -> None:
+    def render_msg(self, entry: dict) -> Text:
+        """A chat line from what we know about the message (it changes with
+        edits, deletions, reactions and read receipts)."""
+        nick, mine = entry["nick"], entry["mine"]
+        color = CYAN if mine else nick_color(nick)
+        line = Text.assemble((entry["stamp"], DIM), (f"{nick[:14]:>14}", f"bold {color}"),
+                             (" ▏", MAGENTA if mine else DIM))
+        reply = entry.get("reply")
+        if reply and not entry.get("deleted"):
+            line.append(f"↪ {reply['n']}: «{clean(reply['q'])[:40]}» ", style=DIM)
+        if entry.get("deleted"):
+            line.append("🗑 mensagem apagada", style=f"italic {DIM}")
+        else:
+            line.append(clean(entry["text"]), style=f"bold {YELLOW}" if entry.get("mention") else TEXT)
+            if entry.get("edited"):
+                line.append(" (editada)", style=DIM)
+        reactions = entry.get("reactions") or {}
+        if reactions and not entry.get("deleted"):
+            counts: dict[str, list[str]] = {}
+            for who, emoji in reactions.items():
+                counts.setdefault(emoji, []).append(who)
+            line.append("  " + "  ".join(f"{e} {len(w)}" if len(w) > 1 else f"{e} {w[0]}"
+                                         for e, w in counts.items()), style=PINK)
+        if entry.get("read"):
+            line.append("  ✓✓", style=GREEN)
+        if entry.get("ttl"):
+            line.append(f"  ⏱{format_duration(entry['ttl'])}", style=DIM)
+        return line
+
+    def update_msg(self, buffer: str, entry: dict) -> None:
+        buf = self.buffers.get(buffer)
+        if not buf:
+            return
+        new = self.render_msg(entry)
+        if buf.replace(entry["line"], new):
+            entry["line"] = new
+            if buffer == self.current:
+                self.refill()
+
+    def chat_line(self, name: str, nick: str, text: str, mine: bool, ttl: int = 0,
+                  mid: str | None = None, reply: dict | None = None) -> None:
         text = clean(text)
         mention = not mine and self.client.nick.lower() in text.lower()
-        color = CYAN if mine else nick_color(nick)
-        body = Text(text, style=f"bold {YELLOW}" if mention else TEXT)
-        line = Text.assemble(self.stamp(), (f"{nick[:14]:>14}", f"bold {color}"), (" ▏", MAGENTA if mine else DIM), body)
+        entry = {"nick": nick, "mine": mine, "text": text, "stamp": self.stamp()[0], "mention": mention,
+                 "reply": reply, "ttl": ttl}
+        line = self.render_msg(entry)
+        entry["line"] = line
         alert = mention or (name.startswith("@") and not mine)
-        self.add_line(name, line, alert=alert, ttl=ttl)
+        self.add_line(name, line, alert=alert)
+        if ttl:
+            self.buffers[name].expiry[id(line)] = time.time() + ttl
+        if mid:
+            buf = self.buffers[name]
+            buf.remember(mid, entry)
+            if name.startswith("@") and not mine:
+                if name == self.current and self.term_focused:
+                    self.client.send_read(name[1:], [mid])
+                else:
+                    buf.to_read.append(mid)
         if alert and (name != self.current or mention):
             self.bell()
         if alert:
@@ -938,6 +1025,7 @@ class ChatApp(App):
 
     def on_app_focus(self, event) -> None:
         self.term_focused = True
+        self.flush_reads(self.current)
 
     # ---------------------------------------------------------------- events
 
@@ -1109,12 +1197,109 @@ class ChatApp(App):
         self.note(text, "warn", CONSOLE)
         self.refresh_all()
 
-    def ev_message(self, buffer: str, nick: str, text: str, mine: bool, ttl: int = 0, sent: int = 0) -> None:
+    def ev_message(self, buffer: str, nick: str, text: str, mine: bool, ttl: int = 0, sent: int = 0,
+                   mid: str | None = None, reply: dict | None = None) -> None:
         if sent:
             # left in the mailbox while we were offline: say when it was written
             when = time.strftime("%d/%m %H:%M", time.localtime(sent))
             text = f"[offline · escrita {when}] {text}"
-        self.chat_line(buffer, nick, text, mine, ttl=ttl)
+        self.chat_line(buffer, nick, text, mine, ttl=ttl, mid=mid, reply=reply)
+
+    def _target(self, buffer: str, mid: str, nick: str) -> dict | None:
+        buf = self.buffers.get(buffer)
+        return buf.msgs.get(mid) if buf else None
+
+    def ev_react(self, buffer: str, nick: str, target: str, emoji: str) -> None:
+        entry = self._target(buffer, target, nick)
+        if entry is None:
+            self.note(f"{nick} reagiu {clean(emoji)} a uma mensagem que não está mais na tela", "info", buffer)
+            return
+        entry.setdefault("reactions", {})[nick] = clean(emoji)
+        self.update_msg(buffer, entry)
+
+    def ev_edit(self, buffer: str, nick: str, target: str, text: str) -> None:
+        entry = self._target(buffer, target, nick)
+        if entry is None or entry["nick"].lower() != nick.lower():
+            return              # only the author edits, and only what we still have
+        entry.update(text=clean(text), edited=True, mention=not entry["mine"] and self.client.nick.lower() in text.lower())
+        self.update_msg(buffer, entry)
+
+    def ev_delete(self, buffer: str, nick: str, target: str) -> None:
+        entry = self._target(buffer, target, nick)
+        if entry is None or entry["nick"].lower() != nick.lower():
+            return
+        entry.update(deleted=True, text="")     # the text is dropped from memory too
+        self.update_msg(buffer, entry)
+
+    def ev_read(self, buffer: str, nick: str, ids: list) -> None:
+        buf = self.buffers.get(buffer)
+        for mid in ids:
+            entry = buf.msgs.get(mid) if buf else None
+            if entry and entry["mine"] and not entry.get("read"):
+                entry["read"] = True
+                self.update_msg(buffer, entry)
+
+    def flush_reads(self, name: str) -> None:
+        buf = self.buffers.get(name)
+        if buf and buf.to_read and name.startswith("@"):
+            self.client.send_read(name[1:], buf.to_read)
+            buf.to_read = []
+
+    def _pick(self, rest: str, mine: bool, usage: str) -> tuple[str, dict, str]:
+        """Message an action applies to: the last one (mine, or someone else's,
+        optionally from the nick given first). Returns (id, entry, rest)."""
+        buf = self.buffers[self.current]
+        if buf.kind == "sys":
+            raise ChatError(f"uso: {usage} (numa conversa ou canal)")
+        words = rest.split(maxsplit=1)
+        found = None
+        if not mine and words and buf.last(False, words[0].lstrip("@")):
+            found = buf.last(False, words[0].lstrip("@"))
+            rest = words[1] if len(words) > 1 else ""
+        found = found or buf.last(mine)
+        if found is None:
+            raise ChatError("não há mensagem " + ("sua " if mine else "") + "nesta janela para isso")
+        return found[0], found[1], rest
+
+    async def cmd_reply(self, rest: str):
+        mid, entry, text = self._pick(rest, False, "/reply [nick] texto")
+        if not text.strip():
+            raise ChatError("uso: /reply [nick] texto")
+        await self.client.annotate(self.current, "reply", {"id": mid, "n": entry["nick"], "text": entry["text"]},
+                                   text)
+
+    async def cmd_react(self, rest: str):
+        mid, entry, emoji = self._pick(rest, False, "/react [nick] emoji")
+        emoji = REACTIONS.get(emoji.strip().lower(), emoji.strip())
+        if not emoji:
+            raise ChatError("uso: /react [nick] emoji  (ex.: /react 👍, /react +1, /react ok)")
+        await self.client.annotate(self.current, "react", {"id": mid, "n": entry["nick"], "text": entry["text"]},
+                                   emoji)
+
+    async def cmd_edit(self, rest: str):
+        if not rest.strip():
+            raise ChatError("uso: /edit novo texto (corrige a sua última mensagem nesta janela)")
+        mid, entry, _ = self._pick("", True, "/edit novo texto")
+        await self.client.annotate(self.current, "edit", {"id": mid, "n": entry["nick"], "text": entry["text"]},
+                                   rest.strip())
+
+    async def cmd_del(self, rest: str):
+        mid, entry, _ = self._pick("", True, "/del")
+        await self.client.annotate(self.current, "delete", {"id": mid, "n": entry["nick"], "text": entry["text"]})
+        self.note("pedido de apagar enviado: some da tela de quem usa cliente 1.16+; quem já leu, leu, e "
+                  "clientes antigos veem só um aviso", "info")
+
+    def cmd_receipts(self, rest: str):
+        choice = rest.strip().lower()
+        if choice not in ("on", "off", "ligar", "desligar"):
+            self.note("confirmação de leitura: " + ("LIGADA" if self.client.receipts else "desligada")
+                      + " · /receipts on|off · só funciona quando os dois lados ligam")
+            return
+        prefs = load_prefs()
+        prefs["receipts"] = self.client.receipts = choice in ("on", "ligar")
+        save_prefs(prefs)
+        self.note("confirmação de leitura " + ("ligada: quem também ligou vê ✓✓ quando você lê, e você vê a dele"
+                                               if self.client.receipts else "desligada"), "ok")
 
     def ev_audio(self, buffer: str, nick: str, data: bytes, seconds: float, mine: bool, ttl: int = 0) -> None:
         if not sniff(data):

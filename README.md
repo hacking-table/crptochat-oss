@@ -393,6 +393,10 @@ Tudo o que o menu faz também existe como comando:
 | `/invite nick` | convida; em canal privado a chave do canal vai junto, cifrada de ponta a ponta |
 | `/rec`, `/play [n]`, `/stop` | grava/envia mensagem de voz, ouve, interrompe |
 | `/voicemask on\|off` | liga/desliga o disfarce de voz (padrão: ligado) |
+| `/reply [nick] texto` | responde à última mensagem (de `nick`, se dado), citando um trecho |
+| `/react [nick] 👍` | reage à última mensagem; `+1`, `ok`, `kkk`, `<3`, `fogo`… viram emoji |
+| `/edit texto`, `/del` | corrige ou apaga a sua última mensagem na janela |
+| `/receipts on\|off` | confirmação de leitura nas diretas (padrão: desligada; só vale se os dois ligarem) |
 | `/send nick\|#canal arquivo [--p2p]` | arquivo pelo servidor (padrão) ou direto, P2P |
 | `/accept [id]`, `/reject [id]` | aceita ou recusa um arquivo |
 | `/who`, `/whois nick`, `/fp` | fingerprints e número de segurança |
@@ -514,6 +518,26 @@ primeiro). `↓` vai aos resultados e `Enter` abre a janela na linha
 encontrada, destacada com `▶`. A busca só olha o que está na memória deste
 computador: nada vai ao servidor, mensagens temporárias vencidas já não
 existem para ela, e o que sumiu ao fechar o chat não volta.
+
+### Respostas, reações, edição e confirmação de leitura
+
+Tudo vai dentro das mensagens cifradas de ponta a ponta, com um id aleatório
+por mensagem; o servidor não distingue uma reação de uma mensagem comum.
+
+- `/reply` cita um trecho (até 80 caracteres) da mensagem respondida, e
+  quem recebe vê `↪ nick: «trecho»` antes do texto.
+- `/react` aparece ao lado da mensagem original (`👍 trinity`).
+- `/edit` troca o texto e marca `(editada)`; `/del` troca por `🗑 mensagem
+  apagada` e tira o texto da memória de quem recebe. Só o autor edita ou
+  apaga, e o cliente confere isso. **Apagar é um pedido**: quem já leu, leu,
+  e ninguém garante o que o outro cliente faz.
+- Clientes anteriores à 1.16 recebem um texto equivalente como mensagem
+  normal (`👍 (reagiu a “…”)`, `[editou] …`, `[apagou uma mensagem]`).
+- **Confirmação de leitura** (`/receipts on`) é desligada por padrão e só
+  nas diretas: quando a janela da conversa está aberta e o terminal em foco,
+  o cliente avisa quem escreveu, e a mensagem ganha `✓✓`. Só funciona se os
+  dois ligarem, e quem desliga também deixa de ver a dos outros. Ela revela
+  quando você leu: deixe desligada se isso importar.
 
 ### Mensagens temporárias
 
@@ -1021,7 +1045,7 @@ Metadados: IPs, nicks online, quem está em qual canal, horário e tamanho
 aproximado das mensagens, nomes dos canais.
 
 Sobre o tamanho: até 4 KiB, todo conteúdo cifrado é completado até a próxima
-potência de 2 (64, 128, 256 … 4096 bytes), então um "ok" e uma frase de 50
+potência de 2 (64, 128, 256 … 4096 bytes), então um "ok" e uma frase de umas 25
 letras têm exatamente o mesmo tamanho no fio, e um parágrafo só se distingue
 de outro pela faixa. Acima de 4 KiB (áudio, textos colados enormes) o
 arredondamento é de 64 bytes, para não dobrar o tráfego pesado (1.15.0+;

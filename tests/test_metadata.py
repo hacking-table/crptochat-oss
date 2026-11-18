@@ -34,14 +34,14 @@ def test_short_and_long_messages_look_the_same(home):
             await alice.join("#lobby")
             await bob.join("#lobby")
             await until(lambda: "bob" in alice.channels["#lobby"].recv and "alice" in bob.channels["#lobby"].recv)
-            texts = ["ok", "sim", "chego em 10 minutos, me espera na porta da frente",
-                     "x" * 70, "y" * 115]
+            texts = ["ok", "sim", "chego em 10 min, me espera",
+                     "x" * 60, "y" * 90]
             for text in texts:
                 alice.send_message("#lobby", text)
             await until(lambda: len(messages(bob)) == len(texts))
             frames = [json.loads(f) for f in h.wire]
             sizes = [len(f["body"]) for f in frames if f.get("t") == "msg"]
             assert len(sizes) == len(texts)
-            assert len(set(sizes[:3])) == 1           # "ok" and a 50-character sentence: same size
-            assert sizes[3] == sizes[4] > sizes[0]    # 70 and 115 characters: the next bucket, together
+            assert len(set(sizes[:3])) == 1           # "ok" and a 26-character sentence: same size
+            assert sizes[3] == sizes[4] > sizes[0]    # 60 and 90 characters: the next bucket, together
     run(main())
