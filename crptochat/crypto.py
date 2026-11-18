@@ -366,3 +366,125 @@ def file_decrypt_chunk(key: bytes, index: int, blob: bytes, last: bool) -> bytes
         return ChaCha20Poly1305(key).decrypt(nonce, blob, b"\x01" if last else b"\x00")
     except InvalidTag as exc:
         raise CryptoError("file chunk authentication failed") from exc
+
+
+# ------------------------------------------- direct messages: Double Ratchet (v3)
+#
+# On top of the per-direction hash ratchet (v2), every change of turn brings a
+# fresh X25519 key: whoever starts answering generates a new key pair and the
+# root key absorbs DH(new key, the other's latest key). Someone who copies a
+# client's state therefore loses access as soon as the other side answers with
+# a key they do not know (post-compromise security), besides the forward
+# secrecy the chains already give. Envelope layout:
+#     0x03 | dh (32) | pn (4) | n (4) | ChaCha20-Poly1305(mk, zero nonce, pad(plaintext))
+# dh is the sender's current ratchet key, pn how many messages the sender
+# sent on its previous chain, n the index on the current one. The header is
+# authenticated (AAD) but not encrypted.
+
+DM_V3 = 0x03
+DR_HEADER = 32 + 4 + 4
+MAX_SKIPPED = 2000            # message keys kept for envelopes that arrive out of order
+
+
+def _kdf_rk(rk: bytes, dh_out: bytes) -> tuple[bytes, bytes]:
+    out = HKDF(algorithm=hashes.SHA256(), length=64, salt=rk, info=b"crptochat-dr-rk-v1").derive(dh_out)
+    return out[:32], out[32:]
+
+
+def _dh(priv: X25519PrivateKey, pub: bytes) -> bytes:
+    try:
+        return priv.exchange(X25519PublicKey.from_public_bytes(pub))
+    except ValueError as exc:
+        raise CryptoError("bad ratchet key") from exc
+
+
+class DoubleRatchet:
+    """State of one pair of sessions. Both sides start from the pairwise key of
+    the sessions (``root``) and their signed session keys; the side with the
+    lower identity key plays Alice (makes the first DH step right away), the
+    other one may still send first, on an initial chain both can derive."""
+
+    def __init__(self, root: bytes, my_ik: bytes, peer_ik: bytes, my_dh: X25519PrivateKey, peer_dh: bytes):
+        lo, hi = sorted((my_ik, peer_ik))
+        rk = hkdf(root, b"crptochat-dr-root-v1|" + lo + hi)
+        first = hkdf(root, b"crptochat-dr-first-v1|" + lo + hi)     # chain of Bob's first messages
+        self.skipped: dict[tuple[bytes, int], bytes] = {}
+        self.ns = self.nr = self.pn = 0
+        if my_ik == lo:     # Alice
+            self.dhs = X25519PrivateKey.generate()
+            self.dhr: bytes | None = peer_dh
+            self.ckr: bytes | None = first
+            self.rk, self.cks = _kdf_rk(rk, _dh(self.dhs, peer_dh))
+        else:               # Bob
+            self.dhs, self.dhr, self.ckr = my_dh, None, None
+            self.rk, self.cks = rk, first
+
+    # a state is replaced only when an envelope opened: copy, work, commit
+    def _copy(self) -> "DoubleRatchet":
+        new = object.__new__(DoubleRatchet)
+        new.__dict__.update(self.__dict__)
+        new.skipped = dict(self.skipped)
+        return new
+
+    @staticmethod
+    def _step(ck: bytes) -> tuple[bytes, bytes]:
+        return hmac.new(ck, b"\x02", hashlib.sha256).digest(), hmac.new(ck, b"\x01", hashlib.sha256).digest()
+
+    def encrypt(self, plaintext: bytes, aad_prefix: bytes) -> bytes:
+        header = x_pub(self.dhs) + struct.pack(">II", self.pn, self.ns)
+        self.cks, mk = self._step(self.cks)
+        self.ns += 1
+        ct = ChaCha20Poly1305(mk).encrypt(ZERO_NONCE, pad(plaintext), aad_prefix + header)
+        return bytes([DM_V3]) + header + ct
+
+    def _skip(self, until: int) -> None:
+        if self.ckr is None:
+            return
+        if until - self.nr > MAX_CHAIN_SKIP:
+            raise CryptoError("chain gap too large")
+        while self.nr < until:
+            self.ckr, mk = self._step(self.ckr)
+            self.skipped[(self.dhr, self.nr)] = mk
+            self.nr += 1
+            while len(self.skipped) > MAX_SKIPPED:
+                del self.skipped[next(iter(self.skipped))]
+
+    def decrypt(self, body: bytes, aad_prefix: bytes) -> bytes:
+        """Open an envelope; the state changes only if it opens."""
+        if len(body) < 1 + DR_HEADER + 16 or body[0] != DM_V3:
+            raise CryptoError("not a v3 direct envelope")
+        header, ct = body[1:1 + DR_HEADER], body[1 + DR_HEADER:]
+        dh, (pn, n) = header[:32], struct.unpack(">II", header[32:])
+        aad = aad_prefix + header
+
+        def open_with(mk: bytes) -> bytes:
+            try:
+                return unpad(ChaCha20Poly1305(mk).decrypt(ZERO_NONCE, ct, aad))
+            except InvalidTag as exc:
+                raise CryptoError("decryption failed") from exc
+
+        mk = self.skipped.get((dh, n))
+        if mk is not None:                       # arrived late, after later ones
+            plaintext = open_with(mk)
+            del self.skipped[(dh, n)]
+            return plaintext
+        work = self._copy()
+        if dh != work.dhr:                       # they changed turn: DH ratchet step
+            work._skip(pn)
+            work.pn, work.ns, work.nr = work.ns, 0, 0
+            work.dhr = dh
+            work.rk, work.ckr = _kdf_rk(work.rk, _dh(work.dhs, dh))
+            work.dhs = X25519PrivateKey.generate()
+            work.rk, work.cks = _kdf_rk(work.rk, _dh(work.dhs, dh))
+        if n < work.nr:
+            raise CryptoError("replayed or old direct message")
+        work._skip(n)
+        work.ckr, mk = work._step(work.ckr)
+        work.nr += 1
+        plaintext = open_with(mk)
+        self.__dict__.update(work.__dict__)
+        return plaintext
+
+
+def dm_v3_aad(sender: str, recipient: str) -> bytes:
+    return b"crptochat-dm-v3|" + sender.lower().encode() + b"|" + recipient.lower().encode() + b"|"
