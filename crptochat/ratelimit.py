@@ -67,6 +67,11 @@ SETTINGS = {
     "history_max_msgs": (100.0, "mensagens do histórico entregues ao entrar no canal"),
     "history_per_sender": (200.0, "mensagens de histórico guardadas por remetente em cada canal (as mais antigas saem)"),
     "history_keep_msgs": (1000.0, "mensagens guardadas por canal (as mais antigas saem antes do prazo)"),
+    # mailbox: direct messages kept, end-to-end encrypted, for someone offline
+    "mail_days": (14.0, "dias que mensagens para quem está offline ficam guardadas (0 = desliga a caixa postal)"),
+    "mail_per_user": (200.0, "mensagens guardadas por destinatário"),
+    "mail_per_sender": (50.0, "mensagens de um mesmo remetente guardadas para um mesmo destinatário"),
+    "prekey_fetch_per_hour": (30.0, "pacotes de prekeys que um usuário pode pedir por hora"),
     "flood_ban_minutes": (5.0, "ban de IP aplicado junto com a desconexão por flood, em minutos (0 = só desconecta)"),
     "ip_memory": (600.0, "segundos que as infrações e contadores de um IP ficam guardados depois que ele desconecta"),
     # what the server holds in memory for one connection that is not reading

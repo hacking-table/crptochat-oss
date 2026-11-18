@@ -91,6 +91,27 @@ CREATE TABLE IF NOT EXISTS history (
     reenc   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS history_chan ON history (chan, id);
+CREATE TABLE IF NOT EXISTS prekeys (
+    nick_lower TEXT PRIMARY KEY,
+    spk_id     INTEGER NOT NULL,
+    spk        BLOB NOT NULL,
+    spk_sig    BLOB NOT NULL,
+    updated    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS onetime_keys (
+    nick_lower TEXT NOT NULL,
+    key_id     INTEGER NOT NULL,
+    pub        BLOB NOT NULL,
+    PRIMARY KEY (nick_lower, key_id)
+);
+CREATE TABLE IF NOT EXISTS mailbox (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    to_lower TEXT NOT NULL,
+    ts       INTEGER NOT NULL,
+    expires  INTEGER NOT NULL,
+    body     BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mailbox_to ON mailbox (to_lower, id);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value BLOB
@@ -110,7 +131,9 @@ MIGRATIONS = [
 
 # Optional features this server speaks, announced in the welcome frame so
 # that newer clients can adapt to older servers and the other way round.
-CAPS = {"ratelimit", "ttl", "relayfile", "history"}
+CAPS = {"ratelimit", "ttl", "relayfile", "history", "mailbox"}
+MAX_ONETIME_KEYS = 100          # one-time prekeys kept per user
+MAIL_FETCH = 100                # envelopes handed over per mail_fetch
 HISTORY_BODY = 12 * 1024        # base64 chars of one history copy (text only)
 
 FILE_CHUNK_B64 = 96 * 1024      # a 64 KiB encrypted chunk, base64, with room to spare
@@ -169,6 +192,7 @@ class Session:
         self.rl: SessionLimits | None = None      # per-kind buckets, set at login
         self.strikes = Strikes(server.limits)
         self.client_version = ""
+        self.bundles: deque[float] = deque()     # when this session fetched prekey bundles
         self.queued = 0                  # bytes waiting in self.queue
         peer = writer.get_extra_info("peername")
         self.ip = peer[0] if peer else "?"
@@ -283,6 +307,10 @@ class Server:
         self.sessions: dict[str, Session] = {}
         self.members: dict[str, dict[str, Session]] = {}
         self.reg_log: dict[str, list[float]] = {}
+        # Mailbox quotas per sender. The database never says who left a message:
+        # only RAM holds an HMAC of the sender, under a key made at startup.
+        self._mail_salt = os.urandom(32)
+        self.mail_from: dict[tuple[str, str], list[int]] = {}
         self._policies: dict[str, dict] = {}
         # Channel bans of anonymous users: they have no account to ban, so the
         # address is kept (in RAM only, never shown) until the server restarts.
@@ -293,7 +321,7 @@ class Server:
             ("accepted", "auth_ok", "auth_fail", "registered", "chan_msgs", "directs", "deliveries",
              "bytes_in", "bytes_out", "refused", "rate_limited", "kicks", "bans",
              "rl_warn", "rl_mute", "rl_kick", "conn_refused", "file_bytes", "files", "slow_closed",
-             "internal_errors"), 0)
+             "internal_errors", "mail_stored"), 0)
         # when each limit fired and how (warn/mute/kick/refused), for the health panel
         self.rl_events: deque[tuple[float, str]] = deque(maxlen=20000)
         self.started = time.time()
@@ -307,6 +335,7 @@ class Server:
     async def start(self, host: str, port: int, ssl_ctx: ssl.SSLContext | None = None) -> int:
         self.tls = ssl_ctx is not None
         self.purge_history()
+        self.purge_mail()
         self._purger = asyncio.create_task(self._purge_loop())
         self._server = await asyncio.start_server(self._handle, host, port, ssl=ssl_ctx, limit=MAX_LINE)
         return self._server.sockets[0].getsockname()[1]
@@ -426,7 +455,7 @@ class Server:
                 "anon_msg_rate": lim["anon_msg_rate"], "anon_msg_burst": lim["anon_msg_burst"],
                 "file_max": int(lim["file_max_mb"] * 1024 * 1024), "file_kbps": lim["file_kbps"],
                 "anon_file_kbps": lim["anon_file_kbps"], "file_window": FILE_WINDOW,
-                "history_body": HISTORY_BODY}
+                "history_body": HISTORY_BODY, "mail_days": lim["mail_days"]}
 
     # ------------------------------------------------------- relayed files
     #
@@ -1234,8 +1263,14 @@ class Server:
             await asyncio.sleep(30)
             try:
                 self.purge_history()
+                self.purge_mail()
             except sqlite3.Error:
                 pass
+
+    def purge_mail(self) -> int:
+        cur = self.db.execute("DELETE FROM mailbox WHERE expires <= ?", (int(time.time()),))
+        self.db.commit()
+        return cur.rowcount
 
     def _store_history(self, sess: Session, chan: str, copy) -> None:
         policy = self.policy(chan)
@@ -1401,6 +1436,138 @@ class Server:
         if other:
             other.send({"t": "invited", "chan": chan, "by": sess.nick})
         return {"nick": row[0], "online": bool(other)}
+
+    # --------------------------------------------- mailbox (offline delivery)
+    #
+    # Prekeys: each registered client publishes a signed X25519 key (rotated by
+    # the client) and a stock of one-time X25519 keys. Whoever wants to write to
+    # someone offline takes a bundle (signed key + one one-time key, which the
+    # server hands out once and forgets) and leaves envelopes in the mailbox.
+    # The server keeps only the recipient, the time and the opaque envelope:
+    # who wrote it travels inside, end to end.
+
+    def _registered(self, sess: Session, what: str) -> None:
+        if sess.guest:
+            raise Refuse("denied", f"anônimos não usam {what}: registre um nickname")
+
+    def _prekey_status(self, key: str) -> dict:
+        row = self.db.execute("SELECT spk_id FROM prekeys WHERE nick_lower=?", (key,)).fetchone()
+        count = self.db.execute("SELECT COUNT(*) FROM onetime_keys WHERE nick_lower=?", (key,)).fetchone()[0]
+        return {"spk_id": row[0] if row else None, "opks": count}
+
+    def _op_prekey_status(self, sess: Session, msg: dict) -> dict:
+        self._registered(sess, "caixa postal")
+        return self._prekey_status(sess.key)
+
+    def _op_prekeys(self, sess: Session, msg: dict) -> dict:
+        self._registered(sess, "caixa postal")
+        opks = msg.get("opks") or []
+        if not isinstance(opks, list) or len(opks) > MAX_ONETIME_KEYS:
+            raise Refuse("bad_request", "prekeys inválidas")
+        try:
+            parsed = []
+            for item in opks:
+                if not (isinstance(item, list) and len(item) == 2 and isinstance(item[0], int)
+                        and not isinstance(item[0], bool) and 0 <= item[0] < 2 ** 31):
+                    raise ProtocolError("bad one-time key")
+                parsed.append((item[0], b64d(item[1], 32)))
+            spk_id = msg.get("spk_id")
+            if spk_id is not None:
+                if not isinstance(spk_id, int) or isinstance(spk_id, bool) or not 0 <= spk_id < 2 ** 31:
+                    raise ProtocolError("bad signed prekey id")
+                spk, sig = b64d(msg.get("spk"), 32), b64d(msg.get("spk_sig"), 64)
+                if not crypto.verify(sess.ik, sig, crypto.spk_message(sess.nick, spk_id, spk)):
+                    raise Refuse("bad_request", "assinatura da prekey inválida")
+                self.db.execute("INSERT OR REPLACE INTO prekeys VALUES (?,?,?,?,?)",
+                                (sess.key, spk_id, spk, sig, int(time.time())))
+        except ProtocolError:
+            raise Refuse("bad_request", "prekeys inválidas")
+        room = MAX_ONETIME_KEYS - self._prekey_status(sess.key)["opks"]
+        for key_id, pub in parsed[:max(0, room)]:
+            self.db.execute("INSERT OR IGNORE INTO onetime_keys VALUES (?,?,?)", (sess.key, key_id, pub))
+        self.db.commit()
+        return self._prekey_status(sess.key)
+
+    def _op_prekey_bundle(self, sess: Session, msg: dict) -> dict:
+        self._registered(sess, "caixa postal")
+        nick = msg.get("nick")
+        if not valid_nick(nick):
+            raise Refuse("bad_nick", "nickname inválido")
+        now = time.time()
+        while sess.bundles and now - sess.bundles[0] > 3600:
+            sess.bundles.popleft()
+        if len(sess.bundles) >= self.limits["prekey_fetch_per_hour"]:
+            raise Refuse("rate", "devagar: pedidos de prekeys demais nesta hora")
+        user = self.db.execute("SELECT nick, ik FROM users WHERE nick_lower=?", (nick.lower(),)).fetchone()
+        row = self.db.execute("SELECT spk_id, spk, spk_sig FROM prekeys WHERE nick_lower=?",
+                              (nick.lower(),)).fetchone()
+        if not user or not row:
+            raise Refuse("no_prekeys", f"{nick} não tem caixa postal neste servidor (cliente antigo ou nunca entrou)")
+        sess.bundles.append(now)
+        reply = {"user": {"nick": user[0], "ik": b64e(bytes(user[1]))},
+                 "spk_id": row[0], "spk": b64e(bytes(row[1])), "spk_sig": b64e(bytes(row[2])), "opk": None}
+        opk = self.db.execute("SELECT key_id, pub FROM onetime_keys WHERE nick_lower=? ORDER BY key_id LIMIT 1",
+                              (nick.lower(),)).fetchone()
+        if opk:
+            # handed out once, then forgotten
+            self.db.execute("DELETE FROM onetime_keys WHERE nick_lower=? AND key_id=?", (nick.lower(), opk[0]))
+            self.db.commit()
+            reply["opk"] = {"id": opk[0], "k": b64e(bytes(opk[1]))}
+        return reply
+
+    def _op_mail(self, sess: Session, msg: dict) -> dict:
+        self._registered(sess, "caixa postal")
+        to, body = msg.get("to"), msg.get("body")
+        days = self.limits["mail_days"]
+        if not days:
+            raise Refuse("no_mailbox", "este servidor não guarda mensagens para quem está offline")
+        if not valid_nick(to) or to.lower() == sess.key:
+            raise Refuse("bad_request", "destinatário inválido")
+        self._check_body(body)
+        self._rate_envelope(sess, body, "direct")
+        if to.lower() in self.sessions:
+            raise Refuse("online", f"{to} está online: mande direto")
+        if not self.db.execute("SELECT 1 FROM prekeys WHERE nick_lower=?", (to.lower(),)).fetchone():
+            raise Refuse("no_prekeys", f"{to} não tem caixa postal neste servidor")
+        stored = self.db.execute("SELECT COUNT(*) FROM mailbox WHERE to_lower=?", (to.lower(),)).fetchone()[0]
+        if stored >= self.limits["mail_per_user"]:
+            raise Refuse("mailbox_full", f"a caixa postal de {to} está cheia")
+        tag = hmac.new(self._mail_salt, sess.key.encode(), hashlib.sha256).hexdigest()
+        mine = self.mail_from.get((tag, to.lower()), [])
+        if mine:
+            marks = ",".join("?" * len(mine))
+            mine = [r[0] for r in self.db.execute(f"SELECT id FROM mailbox WHERE id IN ({marks})", mine)]  # nosec B608
+        if len(mine) >= self.limits["mail_per_sender"]:
+            raise Refuse("mailbox_full", f"você já deixou mensagens demais para {to}; espere ele ler")
+        now = int(time.time())
+        try:
+            blob = b64d(body)
+        except ProtocolError:
+            raise Refuse("bad_request", "mensagem inválida")
+        cur = self.db.execute("INSERT INTO mailbox (to_lower, ts, expires, body) VALUES (?,?,?,?)",
+                              (to.lower(), now, now + int(days * 86400), blob))
+        self.db.commit()
+        self.mail_from[(tag, to.lower())] = mine + [cur.lastrowid]
+        self.counters["mail_stored"] += 1
+        return {"days": days}
+
+    def _op_mail_fetch(self, sess: Session, msg: dict) -> dict:
+        self._registered(sess, "caixa postal")
+        rows = self.db.execute("SELECT id, ts, body FROM mailbox WHERE to_lower=? AND expires > ? ORDER BY id LIMIT ?",
+                               (sess.key, int(time.time()), MAIL_FETCH + 1)).fetchall()
+        return {"mail": [{"id": r[0], "ts": r[1], "body": b64e(bytes(r[2]))} for r in rows[:MAIL_FETCH]],
+                "more": len(rows) > MAIL_FETCH}
+
+    def _op_mail_ack(self, sess: Session, msg: dict) -> dict:
+        ids = msg.get("ids")
+        if not isinstance(ids, list) or len(ids) > MAIL_FETCH or not all(
+                isinstance(i, int) and not isinstance(i, bool) for i in ids):
+            raise Refuse("bad_request", "lista inválida")
+        if ids:
+            marks = ",".join("?" * len(ids))
+            self.db.execute(f"DELETE FROM mailbox WHERE to_lower=? AND id IN ({marks})", [sess.key, *ids])  # nosec B608
+            self.db.commit()
+        return {}
 
     # ----------------------------------------------------- admin (console)
 

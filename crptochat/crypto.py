@@ -488,3 +488,95 @@ class DoubleRatchet:
 
 def dm_v3_aad(sender: str, recipient: str) -> bytes:
     return b"crptochat-dm-v3|" + sender.lower().encode() + b"|" + recipient.lower().encode() + b"|"
+
+
+# --------------------------------------------- offline messages (mailbox, v1)
+#
+# X3DH-style start for someone who is offline. The recipient publishes a signed
+# X25519 prekey (SPK, rotated) and one-time X25519 prekeys (OPK, each handed out
+# once by the server). The sender makes an ephemeral key EK and derives
+#     SK = HKDF(DH(EK, SPK) || DH(EK, OPK), "crptochat-mail-v1" | ik_B | EK | ids)
+# then a hash chain from SK, one key per envelope. Envelope (opaque to the
+# server, which stores only the recipient and the time):
+#     0x04 | EK (32) | spk_id (4) | opk_id (4, 0xFFFFFFFF: none) | n (4) | AEAD
+# Who wrote it travels inside the AEAD, with an Ed25519 signature over the
+# header, recipient, sender, time and content: the server never learns the
+# sender from the stored envelope, and cannot forge one.
+
+MAIL_V1 = 0x04
+NO_OPK = 0xFFFFFFFF
+MAIL_PREFIX = 1 + 32 + 4 + 4
+MAIL_HEADER = MAIL_PREFIX + 4
+MAX_MAIL_INDEX = 10_000
+
+
+def spk_message(nick: str, spk_id: int, spk: bytes) -> bytes:
+    return b"crptochat-spk-v1|" + nick.lower().encode() + b"|" + str(spk_id).encode() + b"|" + spk
+
+
+def _mail_info(recipient_ik: bytes, ek: bytes, spk_id: int, opk_id: int) -> bytes:
+    return b"crptochat-mail-v1|" + recipient_ik + ek + struct.pack(">II", spk_id, opk_id)
+
+
+def mail_start(recipient_ik: bytes, spk_id: int, spk: bytes, opk_id: int | None, opk: bytes | None
+               ) -> tuple[bytes, bytes]:
+    """Sender side: (header prefix, SK). The ephemeral private key is not kept."""
+    ek = X25519PrivateKey.generate()
+    ek_pub = x_pub(ek)
+    secret = _dh(ek, spk) + (_dh(ek, opk) if opk is not None else b"")
+    oid = NO_OPK if opk_id is None else opk_id
+    sk = hkdf(secret, _mail_info(recipient_ik, ek_pub, spk_id, oid))
+    return bytes([MAIL_V1]) + ek_pub + struct.pack(">II", spk_id, oid), sk
+
+
+def mail_parse(body: bytes) -> tuple[bytes, int, int | None, int]:
+    """(EK, spk_id, opk_id or None, n) of an envelope; raises CryptoError."""
+    if len(body) < MAIL_HEADER + 16 or body[0] != MAIL_V1:
+        raise CryptoError("not a mailbox envelope")
+    spk_id, opk_id, n = struct.unpack(">III", body[33:MAIL_HEADER])
+    if n > MAX_MAIL_INDEX:
+        raise CryptoError("mailbox index too large")
+    return body[1:33], spk_id, None if opk_id == NO_OPK else opk_id, n
+
+
+def mail_secret(recipient_ik: bytes, ek: bytes, spk_id: int, spk_priv: X25519PrivateKey,
+                opk_id: int | None, opk_priv: X25519PrivateKey | None) -> bytes:
+    """Recipient side: the same SK."""
+    secret = _dh(spk_priv, ek) + (_dh(opk_priv, ek) if opk_priv is not None else b"")
+    return hkdf(secret, _mail_info(recipient_ik, ek, spk_id, NO_OPK if opk_id is None else opk_id))
+
+
+def _mail_aad(recipient: str, header: bytes) -> bytes:
+    return b"crptochat-mail-v1|" + recipient.lower().encode() + b"|" + header
+
+
+def mail_signed(header: bytes, recipient: str, sender: str, ts: int, payload: str) -> bytes:
+    return (b"crptochat-mail-sig-v1|" + header + b"|" + recipient.lower().encode() + b"|"
+            + sender.lower().encode() + b"|" + str(ts).encode() + b"|" + payload.encode())
+
+
+def mail_encrypt(chain: Chain, prefix: bytes, recipient: str, plaintext: bytes) -> bytes:
+    n, mk = chain.step()
+    header = prefix + struct.pack(">I", n)
+    return header + ChaCha20Poly1305(mk).encrypt(ZERO_NONCE, pad(plaintext), _mail_aad(recipient, header))
+
+
+def mail_decrypt(sk: bytes, recipient: str, body: bytes) -> bytes:
+    _, _, _, n = mail_parse(body)
+    chain = Chain(sk)
+    while chain.n < n:
+        chain.step()
+    _, mk = chain.step()
+    header = body[:MAIL_HEADER]
+    try:
+        return unpad(ChaCha20Poly1305(mk).decrypt(ZERO_NONCE, body[MAIL_HEADER:], _mail_aad(recipient, header)))
+    except InvalidTag as exc:
+        raise CryptoError("decryption failed") from exc
+
+
+def x_private_bytes(key: X25519PrivateKey) -> bytes:
+    return key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+
+
+def x_from_private(raw: bytes) -> X25519PrivateKey:
+    return X25519PrivateKey.from_private_bytes(raw)
