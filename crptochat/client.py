@@ -47,7 +47,7 @@ from .protocol import (
 from .store import Identity, Store
 
 MAX_TEXT = 4000
-CLIENT_CAPS = ["dmr", "file2", "ci"]   # advertised to peers inside direct envelopes
+CLIENT_CAPS = ["dmr", "dr", "file2", "ci"]   # advertised to peers inside direct envelopes
 AUDIO_CHUNK = 20_000        # raw bytes per relayed envelope
 MAX_AUDIO = 1_500_000
 MAX_AUDIO_PARTIAL = 8       # clips being received at the same time
@@ -87,7 +87,7 @@ class Peer:
         # root comes back and its chains continue instead of restarting at n=0.
         self._states: dict[bytes, dict] = {}
         self._burned: set[bytes] = set()        # evicted roots: never reused
-        self._cur: dict = {"dmr": False, "got_v2": False, "caps": None}
+        self._cur: dict = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False}
         self.hello: asyncio.Event | None = None
         self.dropped = False                    # told the user we refused a message from them
         self.guest = False
@@ -167,6 +167,7 @@ class ChatClient:
         self.pin = pin
         self.reg_token = reg_token
         self.guest = guest
+        self.caps = list(CLIENT_CAPS)         # what we tell peers we speak
         self.nick = crypto.guest_nick(identity.ik) if guest else identity.nick
         self.key = self.nick.lower()
         self.role = "user"
@@ -329,7 +330,7 @@ class ChatClient:
         for peer in self.peers.values():
             # our session key is new: every old root (and its chain keys) is gone for good
             peer._pair, peer._states, peer._burned = None, {}, set()
-            peer._cur = {"dmr": False, "got_v2": False, "caps": None}
+            peer._cur = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False}
         if reply.get("registered"):
             self.sys(f"nickname '{self.nick}' registrado permanentemente neste servidor", "ok")
             self.sys("guarde bem sua senha: sem a chave local este nick nunca mais poderá ser usado", "warn")
@@ -547,7 +548,8 @@ class ChatClient:
                     raise CryptoError("chave de sessão reaproveitada: recusada")
                 send, recv = crypto.dm_chains(root, self.identity.ik, peer.ik)
                 # a new pair of sessions: nothing is known about their client yet
-                state = {"dmr": False, "got_v2": False, "caps": None, "send": send, "recv": recv}
+                state = {"dmr": False, "got_v2": False, "caps": None, "send": send, "recv": recv,
+                         "dr": None, "v3": False}
                 peer._states[root] = state
                 while len(peer._states) > self.MAX_ROOTS:
                     old = next(iter(peer._states))
@@ -561,15 +563,28 @@ class ChatClient:
         root = self._pair_key(peer)
         return root, peer._cur["send"], peer._cur["recv"]
 
+    def _ratchet(self, peer: Peer) -> crypto.DoubleRatchet:
+        """Double Ratchet state of the current pair of sessions (created on first use)."""
+        root = self._pair_key(peer)
+        state = peer._cur
+        if state.get("dr") is None:
+            state["dr"] = crypto.DoubleRatchet(root, self.identity.ik, peer.ik, self._dh, peer.dh)
+        return state["dr"]
+
+    def _speaks_v3(self, peer: Peer) -> bool:
+        return "dr" in self.caps and (peer._cur.get("v3") or "dr" in (peer.caps or ()))
+
     def _direct_frame(self, peer: Peer, inner: dict) -> dict:
         self._pair_key(peer)          # selects the state of the current pair of sessions
-        if peer.dmr:
+        if self._speaks_v3(peer):
+            body = self._ratchet(peer).encrypt(json.dumps(inner).encode(), crypto.dm_v3_aad(self.key, peer.key))
+        elif peer.dmr:
             _, send, _ = self._chains(peer)
             body = crypto.dm_encrypt(send, self.key, peer.key, json.dumps(inner).encode())
         else:
             # Older peer, or not known yet: v1 envelope, advertising that we
             # speak v2 (older clients ignore the extra field).
-            inner = {**inner, "cv": CLIENT_CAPS}
+            inner = {**inner, "cv": self.caps}
             aad = b"crptochat-direct-v1|" + self.key.encode() + b"|" + peer.key.encode()
             body = crypto.seal(self._pair_key(peer), crypto.pad(json.dumps(inner).encode()), aad)
         return {"t": "direct", "to": peer.nick, "body": b64e(body)}
@@ -792,7 +807,13 @@ class ChatClient:
     def _open_direct(self, peer: Peer, body: bytes) -> None:
         plain = None
         root = self._pair_key(peer)
-        if body[:1] == bytes([crypto.DM_V2]):
+        if body[:1] == bytes([crypto.DM_V3]) and "dr" in self.caps:
+            try:
+                plain = self._ratchet(peer).decrypt(body, crypto.dm_v3_aad(peer.key, self.key))
+                peer._cur["v3"] = peer._cur["dmr"] = peer._cur["got_v2"] = True
+            except CryptoError:
+                plain = None    # a v1 nonce can start with the same byte: try v1 below
+        if plain is None and body[:1] == bytes([crypto.DM_V2]):
             try:
                 _, _, recv = self._chains(peer)
                 plain = crypto.dm_decrypt(recv, peer.key, self.key, body)
@@ -821,7 +842,7 @@ class ChatClient:
                 peer.hello.set()
             if not inner.get("r"):
                 try:
-                    self.send_direct(peer, {"k": "hi", "r": 1, "cv": CLIENT_CAPS})
+                    self.send_direct(peer, {"k": "hi", "r": 1, "cv": self.caps})
                 except (ChatError, CryptoError):
                     pass
             return
@@ -1186,7 +1207,7 @@ class ChatClient:
         if peer.caps is None:
             peer.hello = asyncio.Event()
             try:
-                self.send_direct(peer, {"k": "hi", "cv": CLIENT_CAPS})
+                self.send_direct(peer, {"k": "hi", "cv": self.caps})
                 await asyncio.wait_for(peer.hello.wait(), timeout)
             except (asyncio.TimeoutError, ChatError, CryptoError):
                 peer.caps = set()
