@@ -1109,7 +1109,11 @@ class ChatApp(App):
         self.note(text, "warn", CONSOLE)
         self.refresh_all()
 
-    def ev_message(self, buffer: str, nick: str, text: str, mine: bool, ttl: int = 0) -> None:
+    def ev_message(self, buffer: str, nick: str, text: str, mine: bool, ttl: int = 0, sent: int = 0) -> None:
+        if sent:
+            # left in the mailbox while we were offline: say when it was written
+            when = time.strftime("%d/%m %H:%M", time.localtime(sent))
+            text = f"[offline · escrita {when}] {text}"
         self.chat_line(buffer, nick, text, mine, ttl=ttl)
 
     def ev_audio(self, buffer: str, nick: str, data: bytes, seconds: float, mine: bool, ttl: int = 0) -> None:
@@ -1664,7 +1668,9 @@ class ChatApp(App):
         chan = self._chan()
         reply = await self.client.invite(chan, self._nick(rest, "/invite nick"))
         ch = self.client.channels.get(chan)
-        if reply.get("keys_sent"):
+        if reply.get("keys_left"):
+            extra = " · está offline: a chave do canal ficou na caixa postal dele, cifrada de ponta a ponta"
+        elif reply.get("keys_sent"):
             extra = " · a chave do canal foi junto, cifrada de ponta a ponta: não precisa passar a senha"
         elif ch and ch.private and reply.get("online"):
             extra = " · o cliente dele não recebe a chave pelo convite (versão antiga): passe a senha por outro meio"

@@ -31,6 +31,7 @@ from . import __version__, crypto
 from .crypto import Chain, CryptoError
 from .p2p import FileTransfers
 from .relayfile import RelayFiles
+from .mailbox import Mailbox, MailboxError
 from .protocol import (
     MAX_BODY,
     MAX_LINE,
@@ -184,6 +185,7 @@ class ChatClient:
         self.local_ip = ""
         self.public_ip = ""
         self.relay = RelayFiles(self)
+        self.mail = Mailbox(self)
         self._history_seen: dict[str, _SeenIds] = {}   # per channel, survives reconnects
         self.files = FileTransfers(self, p2p_port, p2p_host,
                                    download_dir or os.path.expanduser("~/Downloads/crptochat"))
@@ -249,6 +251,7 @@ class ChatClient:
                 self.online = True
                 self.emit("status", state="online")
                 self.spawn(self._rejoin())
+                self.spawn(self._mail_sync())
                 ping = asyncio.create_task(self._ping_loop())
                 try:
                     await self._read_loop(reader)
@@ -343,6 +346,13 @@ class ChatClient:
         self.server_repo = repo if isinstance(repo, str) and len(repo) < 120 else None
         self.emit("welcome", server=self.server_name, motd=motd)
         return reader
+
+    async def _mail_sync(self) -> None:
+        try:
+            await self.mail.sync()
+        except (ChatError, MailboxError, CryptoError, ProtocolError, OSError) as exc:
+            if self.online:
+                self.sys(f"caixa postal: {exc}", "warn")
 
     async def _ping_loop(self) -> None:
         while True:
@@ -829,10 +839,18 @@ class ChatClient:
             plain = crypto.unpad(crypto.unseal(root, body, aad))
         try:
             inner = json.loads(plain)
-            kind = inner["k"]
+            inner["k"]
         except (ValueError, KeyError, TypeError):
             return
-        if isinstance(inner.get("cv"), list):
+        self._on_inner(peer, inner)
+
+    def _on_inner(self, peer: Peer, inner: dict, sent: int = 0) -> None:
+        """Act on the content of a direct envelope. ``sent`` is set for what
+        was left in the mailbox while we were offline (time it was written)."""
+        kind = inner.get("k")
+        if sent and kind not in ("dm", "ttl", "ci"):
+            return
+        if isinstance(inner.get("cv"), list) and not sent:
             peer.caps = {c for c in inner["cv"] if isinstance(c, str)}
             if "dmr" in peer.caps:
                 peer.dmr = True     # from now on we answer with ratcheted envelopes
@@ -860,6 +878,11 @@ class ChatClient:
                 self._on_audio_chunk("@" + peer.nick, peer, inner["a"])
             except (ProtocolError, ValueError, KeyError, TypeError):
                 pass
+        elif kind == "dm" and sent:
+            if "x" in inner:
+                ttl = self._effective_ttl(inner.get("ttl"), self.dm_ttl(peer.nick))
+                self.emit("message", buffer="@" + peer.nick, nick=peer.nick, text=str(inner.get("x"))[:MAX_TEXT],
+                          mine=False, ttl=ttl, sent=sent)
         elif kind == "dm":
             if self.away and not inner.get("auto") and peer.key not in self._away_told:
                 # Like IRC's away, but the text goes end to end and each
@@ -907,13 +930,50 @@ class ChatClient:
         for body in waiting:
             self._deliver(ch, peer, body)
 
+    async def _send_or_leave(self, nick: str, inner) -> tuple[Peer, dict | None]:
+        """Deliver a direct envelope now, or leave it in the mailbox if they are
+        offline. ``inner`` may be a function of the contact (for the TTL).
+        Returns (peer, None) when delivered live, (peer, mailbox reply) otherwise."""
+        for _ in range(3):
+            peer = await self.resolve(nick)
+            content = inner(peer) if callable(inner) else inner
+            if peer.trusted and peer.dh:
+                try:
+                    await self.request(self._direct_frame(peer, content))
+                    return peer, None
+                except ChatError as exc:
+                    if exc.code != "offline":
+                        raise
+                    peer.dh = None                       # left meanwhile: leave it for later
+            if not peer.trusted:
+                self._usable(peer)                       # raises with the explanation
+            if not self.mail.available:
+                raise ChatError(f"{peer.nick} está offline", "offline")
+            try:
+                return peer, await self.mail.send(peer, content)
+            except MailboxError as exc:
+                raise ChatError(str(exc), exc.code) from None
+            except ChatError as exc:
+                if exc.code != "online":                 # came back meanwhile: try live again
+                    raise
+        raise ChatError(f"não consegui entregar a {nick}", "offline")
+
+    def _left_note(self, peer: Peer, reply: dict | None) -> None:
+        if reply is not None:
+            days = reply.get("days") or self.server_limits.get("mail_days") or 14
+            self.sys(f"{peer.nick} está offline: a mensagem ficou na caixa postal, cifrada de ponta a ponta, "
+                     f"e será entregue quando ele voltar (até {int(days)} dias)", "info", "@" + peer.nick)
+
     async def send_dm(self, nick: str, text: str) -> str:
-        peer = self._usable(await self.resolve(nick))
         text = text[:MAX_TEXT]
+
+        def content(peer: Peer) -> dict:
+            ttl = self.dm_ttl(peer.nick)
+            return {"k": "dm", "x": text, "ttl": ttl} if ttl else {"k": "dm", "x": text}
+        peer, left = await self._send_or_leave(nick, content)
         ttl = self.dm_ttl(peer.nick)
-        inner = {"k": "dm", "x": text, "ttl": ttl} if ttl else {"k": "dm", "x": text}
-        await self.request(self._direct_frame(peer, inner))
         self.emit("message", buffer="@" + peer.nick, nick=self.nick, text=text, mine=True, ttl=ttl)
+        self._left_note(peer, left)
         return peer.nick
 
     # --------------------------------------------------------- voice messages
@@ -1087,16 +1147,22 @@ class ChatClient:
         reply = await self.request({"t": "invite", "chan": chan, "nick": nick})
         ch = self.channels.get(chan)
         reply["keys_sent"] = False
-        if ch and ch.private and ch.auth and ch.psk and reply.get("online"):
+        if ch and ch.private and ch.auth and ch.psk:
+            inner = {"k": "ci", "chan": chan, "a": b64e(ch.auth), "p": b64e(ch.psk)}
+            if ch.hkey:
+                inner["h"] = b64e(ch.hkey)
             try:
-                peer = self._usable(await self.resolve(nick))
-                if await self.peer_supports(peer, "ci"):
-                    inner = {"k": "ci", "chan": chan, "a": b64e(ch.auth), "p": b64e(ch.psk)}
-                    if ch.hkey:
-                        inner["h"] = b64e(ch.hkey)
-                    await self.request(self._direct_frame(peer, inner))
-                    reply["keys_sent"] = True
-            except (ChatError, CryptoError):
+                if reply.get("online"):
+                    peer = self._usable(await self.resolve(nick))
+                    if await self.peer_supports(peer, "ci"):
+                        await self.request(self._direct_frame(peer, inner))
+                        reply["keys_sent"] = True
+                elif self.mail.available:
+                    # offline: the keys wait in their mailbox, sealed to their prekeys
+                    peer = await self.resolve(nick)
+                    await self.mail.send(peer, inner)
+                    reply["keys_sent"] = reply["keys_left"] = True
+            except (ChatError, CryptoError, MailboxError):
                 pass
         return reply
 
@@ -1194,8 +1260,8 @@ class ChatClient:
 
     async def set_dm_ttl(self, nick: str, seconds: int) -> str:
         """Agree on a timer with the other person (end to end; the server never knows)."""
-        peer = self._usable(await self.resolve(nick))
-        await self.request(self._direct_frame(peer, {"k": "ttl", "s": seconds}))
+        peer, left = await self._send_or_leave(nick, {"k": "ttl", "s": seconds})
+        self._left_note(peer, left)
         self.store.set_dm_ttl(peer.nick, seconds)
         self.emit("dm_ttl", nick=peer.nick, seconds=seconds, by=self.nick)
         return peer.nick
