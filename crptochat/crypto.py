@@ -249,10 +249,30 @@ def dh_message(nick: str, dh: bytes) -> bytes:
 
 # ------------------------------------------------------------------- AEAD
 
+PAD_BUCKET_MAX = 4096
+
+
+def padded_size(length: int) -> int:
+    """Size after padding ``length`` bytes (the 0x80 marker included).
+
+    Up to 4 KiB, the next power of two (64, 128, 256 ... 4096): a short "ok"
+    and a whole paragraph look the same on the wire, which matters because
+    short messages are most of a conversation. Above that (voice, files,
+    long pastes), multiples of 64 bytes, so bulky traffic does not double."""
+    length += 1
+    if length <= PAD_BUCKET_MAX:
+        size = PAD_BLOCK
+        while size < length:
+            size *= 2
+        return size
+    return length + (-length % PAD_BLOCK)
+
+
 def pad(data: bytes) -> bytes:
-    """ISO/IEC 7816-4 padding to hide exact message length."""
-    data += b"\x80"
-    return data + b"\x00" * (-len(data) % PAD_BLOCK)
+    """ISO/IEC 7816-4 padding to hide the exact message length (see padded_size).
+    Any padding length opens with unpad, so older clients read it as before."""
+    size = padded_size(len(data))
+    return data + b"\x80" + b"\x00" * (size - len(data) - 1)
 
 
 def unpad(data: bytes) -> bytes:
