@@ -1,4 +1,6 @@
-"""Etapa 4: forward secrecy for direct messages (per-direction ratchet, negotiated per contact)."""
+"""Etapa 4: forward secrecy for direct messages (per-direction ratchet, negotiated per contact).
+
+Clients here speak up to v2, like 1.1 to 1.10."""
 
 import asyncio
 import json
@@ -15,6 +17,10 @@ from crptochat.protocol import b64d
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("CRPTOCHAT_HOME", str(tmp_path / "cfg"))
     monkeypatch.setattr(crypto, "SCRYPT_N", 2 ** 10)
+    # These tests pin the v2 envelope (clients 1.1 to 1.10, which do not speak
+    # the Double Ratchet); v3 is covered in test_double_ratchet.py.
+    from crptochat import client
+    monkeypatch.setattr(client, "CLIENT_CAPS", [c for c in client.CLIENT_CAPS if c != "dr"])
     return tmp_path
 
 
