@@ -127,6 +127,8 @@ MIGRATIONS = [
     "ALTER TABLE channels ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0",   # bumped when the password changes
     "ALTER TABLE history ADD COLUMN sender TEXT NOT NULL DEFAULT ''",      # who uploaded the copy (nick.lower())
     "ALTER TABLE history ADD COLUMN reenc INTEGER NOT NULL DEFAULT 0",     # re-encrypted by the owner on /chanpass
+    "ALTER TABLE prekeys ADD COLUMN kem BLOB",        # ML-KEM-768 prekey (post-quantum), signed
+    "ALTER TABLE prekeys ADD COLUMN kem_sig BLOB",
 ]
 
 # Optional features this server speaks, announced in the welcome frame so
@@ -1451,9 +1453,9 @@ class Server:
             raise Refuse("denied", f"anônimos não usam {what}: registre um nickname")
 
     def _prekey_status(self, key: str) -> dict:
-        row = self.db.execute("SELECT spk_id FROM prekeys WHERE nick_lower=?", (key,)).fetchone()
+        row = self.db.execute("SELECT spk_id, kem IS NOT NULL FROM prekeys WHERE nick_lower=?", (key,)).fetchone()
         count = self.db.execute("SELECT COUNT(*) FROM onetime_keys WHERE nick_lower=?", (key,)).fetchone()[0]
-        return {"spk_id": row[0] if row else None, "opks": count}
+        return {"spk_id": row[0] if row else None, "opks": count, "kem": bool(row and row[1])}
 
     def _op_prekey_status(self, sess: Session, msg: dict) -> dict:
         self._registered(sess, "caixa postal")
@@ -1478,8 +1480,13 @@ class Server:
                 spk, sig = b64d(msg.get("spk"), 32), b64d(msg.get("spk_sig"), 64)
                 if not crypto.verify(sess.ik, sig, crypto.spk_message(sess.nick, spk_id, spk)):
                     raise Refuse("bad_request", "assinatura da prekey inválida")
-                self.db.execute("INSERT OR REPLACE INTO prekeys VALUES (?,?,?,?,?)",
-                                (sess.key, spk_id, spk, sig, int(time.time())))
+                kem = kem_sig = None
+                if msg.get("kem") is not None:
+                    kem, kem_sig = b64d(msg.get("kem"), crypto.KEM_PUB), b64d(msg.get("kem_sig"), 64)
+                    if not crypto.verify(sess.ik, kem_sig, crypto.kem_prekey_message(sess.nick, spk_id, kem)):
+                        raise Refuse("bad_request", "assinatura da prekey pós-quântica inválida")
+                self.db.execute("INSERT OR REPLACE INTO prekeys (nick_lower, spk_id, spk, spk_sig, updated, kem, kem_sig)"
+                                " VALUES (?,?,?,?,?,?,?)", (sess.key, spk_id, spk, sig, int(time.time()), kem, kem_sig))
         except ProtocolError:
             raise Refuse("bad_request", "prekeys inválidas")
         room = MAX_ONETIME_KEYS - self._prekey_status(sess.key)["opks"]
@@ -1499,13 +1506,15 @@ class Server:
         if len(sess.bundles) >= self.limits["prekey_fetch_per_hour"]:
             raise Refuse("rate", "devagar: pedidos de prekeys demais nesta hora")
         user = self.db.execute("SELECT nick, ik FROM users WHERE nick_lower=?", (nick.lower(),)).fetchone()
-        row = self.db.execute("SELECT spk_id, spk, spk_sig FROM prekeys WHERE nick_lower=?",
+        row = self.db.execute("SELECT spk_id, spk, spk_sig, kem, kem_sig FROM prekeys WHERE nick_lower=?",
                               (nick.lower(),)).fetchone()
         if not user or not row:
             raise Refuse("no_prekeys", f"{nick} não tem caixa postal neste servidor (cliente antigo ou nunca entrou)")
         sess.bundles.append(now)
         reply = {"user": {"nick": user[0], "ik": b64e(bytes(user[1]))},
                  "spk_id": row[0], "spk": b64e(bytes(row[1])), "spk_sig": b64e(bytes(row[2])), "opk": None}
+        if row[3] is not None:
+            reply.update(kem=b64e(bytes(row[3])), kem_sig=b64e(bytes(row[4])))
         opk = self.db.execute("SELECT key_id, pub FROM onetime_keys WHERE nick_lower=? ORDER BY key_id LIMIT 1",
                               (nick.lower(),)).fetchone()
         if opk:

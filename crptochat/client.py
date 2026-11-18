@@ -88,7 +88,7 @@ class Peer:
         # root comes back and its chains continue instead of restarting at n=0.
         self._states: dict[bytes, dict] = {}
         self._burned: set[bytes] = set()        # evicted roots: never reused
-        self._cur: dict = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False}
+        self._cur: dict = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False, "peer_kem": None}
         self.hello: asyncio.Event | None = None
         self.dropped = False                    # told the user we refused a message from them
         self.guest = False
@@ -168,7 +168,7 @@ class ChatClient:
         self.pin = pin
         self.reg_token = reg_token
         self.guest = guest
-        self.caps = list(CLIENT_CAPS)         # what we tell peers we speak
+        self.caps = list(CLIENT_CAPS) + (["pq"] if crypto.HAS_MLKEM else [])   # what we tell peers we speak
         self.nick = crypto.guest_nick(identity.ik) if guest else identity.nick
         self.key = self.nick.lower()
         self.role = "user"
@@ -190,6 +190,7 @@ class ChatClient:
         self.files = FileTransfers(self, p2p_port, p2p_host,
                                    download_dir or os.path.expanduser("~/Downloads/crptochat"))
         self._dh = None
+        self._kem = None          # ML-KEM-768 key pair of this session (post-quantum layer)
         self._writer: asyncio.StreamWriter | None = None
         self._pending: dict[int, tuple[asyncio.Future, object]] = {}
         self._next_id = 0
@@ -304,6 +305,7 @@ class ChatClient:
                 raise ProtocolError("resposta inesperada do servidor")
             nonce = b64d(welcome.get("nonce"))
             self._dh = crypto.x_generate()
+            self._kem = crypto.kem_generate() if crypto.HAS_MLKEM else None
             dh = crypto.x_pub(self._dh)
             writer.write(encode({
                 "t": "auth", "id": 0, "nick": self.nick, "ik": b64e(self.identity.ik), "dh": b64e(dh),
@@ -333,7 +335,7 @@ class ChatClient:
         for peer in self.peers.values():
             # our session key is new: every old root (and its chain keys) is gone for good
             peer._pair, peer._states, peer._burned = None, {}, set()
-            peer._cur = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False}
+            peer._cur = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False, "peer_kem": None}
         if reply.get("registered"):
             self.sys(f"nickname '{self.nick}' registrado permanentemente neste servidor", "ok")
             self.sys("guarde bem sua senha: sem a chave local este nick nunca mais poderá ser usado", "warn")
@@ -559,7 +561,7 @@ class ChatClient:
                 send, recv = crypto.dm_chains(root, self.identity.ik, peer.ik)
                 # a new pair of sessions: nothing is known about their client yet
                 state = {"dmr": False, "got_v2": False, "caps": None, "send": send, "recv": recv,
-                         "dr": None, "v3": False}
+                         "dr": None, "v3": False, "peer_kem": None}
                 peer._states[root] = state
                 while len(peer._states) > self.MAX_ROOTS:
                     old = next(iter(peer._states))
@@ -578,7 +580,8 @@ class ChatClient:
         root = self._pair_key(peer)
         state = peer._cur
         if state.get("dr") is None:
-            state["dr"] = crypto.DoubleRatchet(root, self.identity.ik, peer.ik, self._dh, peer.dh)
+            state["dr"] = crypto.DoubleRatchet(root, self.identity.ik, peer.ik, self._dh, peer.dh,
+                                               self._kem, state.get("peer_kem"))
         return state["dr"]
 
     def _speaks_v3(self, peer: Peer) -> bool:
@@ -586,6 +589,12 @@ class ChatClient:
 
     def _direct_frame(self, peer: Peer, inner: dict) -> dict:
         self._pair_key(peer)          # selects the state of the current pair of sessions
+        dr = peer._cur.get("dr")
+        if (self._kem is not None and "pq" in self.caps and not (dr and dr.pq_received)
+                and (peer.caps is None or "pq" in peer.caps)):
+            # our ML-KEM key goes along, end to end, until they have used it
+            # (and only while they may have the layer: older clients ignore it)
+            inner = {**inner, "kp": b64e(crypto.kem_pub(self._kem))}
         if self._speaks_v3(peer):
             body = self._ratchet(peer).encrypt(json.dumps(inner).encode(), crypto.dm_v3_aad(self.key, peer.key))
         elif peer.dmr:
@@ -817,7 +826,7 @@ class ChatClient:
     def _open_direct(self, peer: Peer, body: bytes) -> None:
         plain = None
         root = self._pair_key(peer)
-        if body[:1] == bytes([crypto.DM_V3]) and "dr" in self.caps:
+        if body[:1] in (bytes([crypto.DM_V3]), bytes([crypto.DM_V3_PQ])) and "dr" in self.caps:
             try:
                 plain = self._ratchet(peer).decrypt(body, crypto.dm_v3_aad(peer.key, self.key))
                 peer._cur["v3"] = peer._cur["dmr"] = peer._cur["got_v2"] = True
@@ -850,6 +859,16 @@ class ChatClient:
         kind = inner.get("k")
         if sent and kind not in ("dm", "ttl", "ci"):
             return
+        if inner.get("kp") and not sent and crypto.HAS_MLKEM and "pq" in self.caps:
+            try:
+                kp = b64d(inner["kp"], crypto.KEM_PUB)
+            except ProtocolError:
+                kp = None
+            if kp is not None:
+                peer._cur["peer_kem"] = kp
+                dr = peer._cur.get("dr")
+                if dr is not None and dr.peer_kem is None:
+                    dr.peer_kem = kp
         if isinstance(inner.get("cv"), list) and not sent:
             peer.caps = {c for c in inner["cv"] if isinstance(c, str)}
             if "dmr" in peer.caps:

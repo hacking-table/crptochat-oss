@@ -90,6 +90,10 @@ class PreKeyStore:
             key = crypto.x_generate()
             self.data["spk"] = {"id": self._new_id(), "priv": b64e(crypto.x_private_bytes(key)), "t": now}
             changed = True
+        if crypto.HAS_MLKEM and "kem" not in self.data["spk"]:
+            # post-quantum prekey, rotated together with the signed one
+            self.data["spk"]["kem"] = b64e(crypto.kem_seed(crypto.kem_generate()))
+            changed = True
         kept = [old for old in self.data["old"] if now - old["retired"] < SPK_KEEP]
         if len(kept) != len(self.data["old"]):
             self.data["old"], changed = kept, True
@@ -111,6 +115,14 @@ class PreKeyStore:
         sig = crypto.sign(self.identity.key, crypto.spk_message(self.identity.nick, spk["id"], pub))
         return spk["id"], pub, sig
 
+    def kem_prekey(self) -> tuple[bytes, bytes] | None:
+        """(ML-KEM public key, signature) that goes with the current signed prekey."""
+        spk = self.data["spk"]
+        if not spk.get("kem") or not crypto.HAS_MLKEM:
+            return None
+        pub = crypto.kem_pub(crypto.kem_from_seed(b64d(spk["kem"])))
+        return pub, crypto.sign(self.identity.key, crypto.kem_prekey_message(self.identity.nick, spk["id"], pub))
+
     def new_onetime(self, count: int) -> list[list]:
         out = []
         for _ in range(max(0, count)):
@@ -129,6 +141,12 @@ class PreKeyStore:
         for spk in [self.data["spk"]] + self.data["old"]:
             if spk and spk["id"] == key_id:
                 return crypto.x_from_private(b64d(spk["priv"]))
+        return None
+
+    def kem_private(self, key_id: int):
+        for spk in [self.data["spk"]] + self.data["old"]:
+            if spk and spk["id"] == key_id and spk.get("kem") and crypto.HAS_MLKEM:
+                return crypto.kem_from_seed(b64d(spk["kem"]))
         return None
 
     def opk_private(self, key_id: int):
@@ -174,9 +192,13 @@ class Mailbox:
         status = await self.client.request({"t": "prekey_status"})
         rotated = store.rotate()
         req: dict = {"t": "prekeys"}
-        if rotated or status.get("spk_id") != store.data["spk"]["id"]:
+        if rotated or status.get("spk_id") != store.data["spk"]["id"] or (
+                store.kem_prekey() and not status.get("kem")):
             spk_id, pub, sig = store.signed_prekey()
             req.update(spk_id=spk_id, spk=b64e(pub), spk_sig=b64e(sig))
+            kem = store.kem_prekey()
+            if kem:
+                req.update(kem=b64e(kem[0]), kem_sig=b64e(kem[1]))
         have = int(status.get("opks") or 0)
         if status.get("spk_id") is None or have < OPK_LOW:
             req["opks"] = store.new_onetime(OPK_TARGET - have)
@@ -216,13 +238,25 @@ class Mailbox:
             spk_id, spk, sig = int(reply["spk_id"]), b64d(reply["spk"], 32), b64d(reply["spk_sig"], 64)
             opk = reply.get("opk")
             opk_id, opk_pub = (int(opk["id"]), b64d(opk["k"], 32)) if opk else (None, None)
+            kem = b64d(reply["kem"], crypto.KEM_PUB) if reply.get("kem") else None
+            kem_sig = b64d(reply["kem_sig"], 64) if kem else None
         except (ProtocolError, KeyError, TypeError, ValueError) as exc:
             raise MailboxError("pacote de prekeys inválido") from exc
         if ik != peer.ik:
             raise MailboxError(f"o servidor apresentou outra chave para {peer.nick}: nada foi enviado", "untrusted")
         if not crypto.verify(peer.ik, sig, crypto.spk_message(peer.nick, spk_id, spk)):
             raise MailboxError(f"a prekey de {peer.nick} não tem assinatura válida: nada foi enviado", "untrusted")
-        prefix, sk = crypto.mail_start(peer.ik, spk_id, spk, opk_id, opk_pub)
+        if kem is None and crypto.HAS_MLKEM and self.client.store.uses_pq(peer.nick):
+            # they had a post-quantum prekey before: a bundle without one is a downgrade
+            raise MailboxError(f"o servidor entregou a prekey de {peer.nick} sem a parte pós-quântica que ela "
+                               "já tinha: nada foi enviado", "untrusted")
+        if kem is not None and not crypto.verify(peer.ik, kem_sig, crypto.kem_prekey_message(peer.nick, spk_id, kem)):
+            raise MailboxError(f"a prekey pós-quântica de {peer.nick} não tem assinatura válida: nada foi enviado",
+                               "untrusted")
+        if kem is not None and crypto.HAS_MLKEM:
+            self.client.store.set_uses_pq(peer.nick)
+        prefix, sk = crypto.mail_start(peer.ik, spk_id, spk, opk_id, opk_pub,
+                                       kem if crypto.HAS_MLKEM else None)
         return {"prefix": prefix, "chain": crypto.Chain(sk), "t": time.time(), "ik": peer.ik}
 
     # ----------------------------------------------------------- receiving
@@ -262,17 +296,22 @@ class Mailbox:
         store = self.store
         body = b64d(item["body"])
         ek, spk_id, opk_id, n = crypto.mail_parse(body)
-        tag = hashlib.sha256(body[:crypto.MAIL_HEADER]).hexdigest()
+        size = crypto.mail_header_len(body)
+        tag = hashlib.sha256(body[:size]).hexdigest()
         if store.seen(tag):
             return                              # the server handed it out again
-        key = (ek, spk_id, opk_id)
+        kem_ct = crypto.mail_kem_ct(body)
+        key = (ek, spk_id, opk_id, kem_ct)
         sk = secrets.get(key)
         if sk is None:
             spk = store.spk_private(spk_id)
             opk = store.opk_private(opk_id) if opk_id is not None else None
             if spk is None or (opk_id is not None and opk is None):
                 raise MailboxError("as prekeys dela já expiraram ou foram usadas")
-            sk = secrets[key] = crypto.mail_secret(c.identity.ik, ek, spk_id, spk, opk_id, opk)
+            kem = store.kem_private(spk_id) if kem_ct is not None else None
+            if kem_ct is not None and kem is None:
+                raise MailboxError("a prekey pós-quântica dela já expirou")
+            sk = secrets[key] = crypto.mail_secret(c.identity.ik, ek, spk_id, spk, opk_id, opk, kem, kem_ct)
             if opk_id is not None:
                 used.add(opk_id)
         plain = json.loads(crypto.mail_decrypt(sk, c.nick, body))
@@ -282,7 +321,7 @@ class Mailbox:
         peer = await c.resolve(sender)
         if not peer.trusted:
             raise MailboxError(f"a chave de {peer.nick} mudou e ainda não foi aceita (/verify {peer.nick})")
-        if not crypto.verify(peer.ik, sig, crypto.mail_signed(body[:crypto.MAIL_HEADER], c.nick, sender, ts, payload)):
+        if not crypto.verify(peer.ik, sig, crypto.mail_signed(body[:size], c.nick, sender, ts, payload)):
             raise MailboxError(f"assinatura de {peer.nick} inválida")
         inner = json.loads(payload)
         if not isinstance(inner, dict) or inner.get("k") not in MAIL_KINDS:
