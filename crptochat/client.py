@@ -48,6 +48,37 @@ from .protocol import (
 from .store import Identity, Store
 
 MAX_TEXT = 4000
+MAX_REACTION = 16           # characters of a reaction (an emoji, a short word)
+QUOTE = 80                  # characters of the replied-to message carried along
+
+
+def _mid(value) -> str | None:
+    """A message id as received (random hex made by the sender), or None."""
+    return value if isinstance(value, str) and 0 < len(value) <= 32 and value.isalnum() else None
+
+
+def _annotations(payload: dict, buffer: str, nick: str):
+    """Reactions, edits and deletions ride on ordinary messages, with a text
+    that older clients show as is ("x"). Returns (event kind, data) for a new
+    client, or None for a plain message."""
+    target = _mid(payload.get("to") or payload.get("ed") or payload.get("del"))
+    if target is None:
+        return None
+    if "r" in payload and payload.get("to"):
+        emoji = str(payload["r"])[:MAX_REACTION].strip()
+        return ("react", {"buffer": buffer, "nick": nick, "target": target, "emoji": emoji}) if emoji else None
+    if payload.get("ed"):
+        return "edit", {"buffer": buffer, "nick": nick, "target": target, "text": str(payload.get("t2", ""))[:MAX_TEXT]}
+    if payload.get("del"):
+        return "delete", {"buffer": buffer, "nick": nick, "target": target}
+    return None
+
+
+def _reply_of(payload: dict) -> dict | None:
+    re_ = payload.get("re")
+    if isinstance(re_, dict) and _mid(re_.get("id")) and valid_nick(re_.get("n")):
+        return {"id": re_["id"], "n": re_["n"], "q": str(re_.get("q") or "")[:QUOTE]}
+    return None
 CLIENT_CAPS = ["dmr", "dr", "file2", "ci"]   # advertised to peers inside direct envelopes
 AUDIO_CHUNK = 20_000        # raw bytes per relayed envelope
 MAX_AUDIO = 1_500_000
@@ -169,6 +200,7 @@ class ChatClient:
         self.reg_token = reg_token
         self.guest = guest
         self.caps = list(CLIENT_CAPS) + (["pq"] if crypto.HAS_MLKEM else [])   # what we tell peers we speak
+        self.receipts = False                  # read receipts: off unless the user turns them on
         self.nick = crypto.guest_nick(identity.ik) if guest else identity.nick
         self.key = self.nick.lower()
         self.role = "user"
@@ -738,7 +770,9 @@ class ChatClient:
         self.emit("member_leave", chan=ch.name, nick=peer.nick, kicked=msg.get("kicked"))
         self.emit("members", chan=ch.name)
 
-    def send_message(self, chan: str, text: str) -> None:
+    def send_message(self, chan: str, text: str, extra: dict | None = None, shown: str | None = None) -> str:
+        """Send to a channel; returns the message id. ``extra`` carries a reply,
+        reaction, edit or deletion (``text`` is then what older clients show)."""
         ch = self.channels.get(chan)
         if not ch or not ch.joined:
             raise ChatError("você não está conectado a este canal")
@@ -747,7 +781,10 @@ class ChatClient:
                             "moderated")
         text = text[:MAX_TEXT]
         ttl = self.ttl_for(chan)
-        payload = {"x": text, "ttl": ttl} if ttl else {"x": text}
+        mid = os.urandom(6).hex()
+        payload = {"x": text, "id": mid, **(extra or {})}
+        if ttl:
+            payload["ttl"] = ttl
         copy, line_id = self._history_copy(ch, text)
         if line_id:
             payload["hid"] = line_id          # lets members skip this line when the history comes later
@@ -761,11 +798,20 @@ class ChatClient:
             frame["h"] = copy
             self._seen_history(chan).add(line_id)
         self._send(frame)
-        self.emit("message", buffer=chan, nick=self.nick, text=text, mine=True, ttl=ttl)
+        self._emit_own(chan, text, mid, ttl, payload)
         if line_id and not copy:
             self.emit("system", text="esta mensagem não entrou no histórico do canal: passou do tamanho máximo "
                                      f"guardado ({self.history_body() // 1024} KiB); quem entrar depois não a verá",
                       level="warn", buffer=chan)
+        return mid
+
+    def _emit_own(self, buffer: str, text: str, mid: str, ttl: int, payload: dict) -> None:
+        note = _annotations(payload, buffer, self.nick)
+        if note:
+            self.emit(note[0], **note[1])
+        else:
+            self.emit("message", buffer=buffer, nick=self.nick, text=text, mine=True, ttl=ttl, mid=mid,
+                      reply=_reply_of(payload))
 
     def _on_msg(self, msg: dict) -> None:
         ch = self.channels.get(msg["chan"])
@@ -793,7 +839,12 @@ class ChatClient:
             return
         if isinstance(payload.get("hid"), str):
             self._seen_history(ch.name).add(payload["hid"][:64])      # already seen live
-        self.emit("message", buffer=ch.name, nick=peer.nick, text=text, mine=False, ttl=ttl)
+        note = _annotations(payload, ch.name, peer.nick)
+        if note:
+            self.emit(note[0], **note[1])
+            return
+        self.emit("message", buffer=ch.name, nick=peer.nick, text=text, mine=False, ttl=ttl,
+                  mid=_mid(payload.get("id")), reply=_reply_of(payload))
 
     # -------------------------------------------------- direct envelopes
 
@@ -897,11 +948,18 @@ class ChatClient:
                 self._on_audio_chunk("@" + peer.nick, peer, inner["a"])
             except (ProtocolError, ValueError, KeyError, TypeError):
                 pass
+        elif kind == "dm" and "x" in inner and _annotations(inner, "@" + peer.nick, peer.nick):
+            note = _annotations(inner, "@" + peer.nick, peer.nick)
+            self.emit(note[0], **note[1])
+        elif kind == "rd":
+            ids = [i for i in inner.get("ids") or [] if _mid(i)][:200] if isinstance(inner.get("ids"), list) else []
+            if ids and self.receipts:
+                self.emit("read", buffer="@" + peer.nick, nick=peer.nick, ids=ids)
         elif kind == "dm" and sent:
             if "x" in inner:
                 ttl = self._effective_ttl(inner.get("ttl"), self.dm_ttl(peer.nick))
                 self.emit("message", buffer="@" + peer.nick, nick=peer.nick, text=str(inner.get("x"))[:MAX_TEXT],
-                          mine=False, ttl=ttl, sent=sent)
+                          mine=False, ttl=ttl, sent=sent, mid=_mid(inner.get("id")), reply=_reply_of(inner))
         elif kind == "dm":
             if self.away and not inner.get("auto") and peer.key not in self._away_told:
                 # Like IRC's away, but the text goes end to end and each
@@ -914,7 +972,7 @@ class ChatClient:
                     pass
             ttl = self._effective_ttl(inner.get("ttl"), self.dm_ttl(peer.nick))
             self.emit("message", buffer="@" + peer.nick, nick=peer.nick, text=str(inner.get("x"))[:MAX_TEXT],
-                      mine=False, ttl=ttl)
+                      mine=False, ttl=ttl, mid=_mid(inner.get("id")), reply=_reply_of(inner))
         elif kind == "ttl":
             # disappearing messages for this conversation, agreed end to end
             seconds = inner.get("s")
@@ -983,17 +1041,52 @@ class ChatClient:
             self.sys(f"{peer.nick} está offline: a mensagem ficou na caixa postal, cifrada de ponta a ponta, "
                      f"e será entregue quando ele voltar (até {int(days)} dias)", "info", "@" + peer.nick)
 
-    async def send_dm(self, nick: str, text: str) -> str:
+    async def send_dm(self, nick: str, text: str, extra: dict | None = None) -> str:
         text = text[:MAX_TEXT]
+        mid = os.urandom(6).hex()
 
         def content(peer: Peer) -> dict:
             ttl = self.dm_ttl(peer.nick)
-            return {"k": "dm", "x": text, "ttl": ttl} if ttl else {"k": "dm", "x": text}
+            inner = {"k": "dm", "x": text, "id": mid, **(extra or {})}
+            if ttl:
+                inner["ttl"] = ttl
+            return inner
         peer, left = await self._send_or_leave(nick, content)
-        ttl = self.dm_ttl(peer.nick)
-        self.emit("message", buffer="@" + peer.nick, nick=self.nick, text=text, mine=True, ttl=ttl)
+        self._emit_own("@" + peer.nick, text, mid, self.dm_ttl(peer.nick), content(peer))
         self._left_note(peer, left)
         return peer.nick
+
+    def send_read(self, nick: str, ids: list[str]) -> None:
+        """Read receipt (only when we turned them on, and only to someone online)."""
+        peer = self.peers.get(nick.lower())
+        ids = [i for i in ids if _mid(i)][:200]
+        if not self.receipts or not ids or not peer or not peer.trusted or not peer.dh:
+            return
+        try:
+            self.send_direct(peer, {"k": "rd", "ids": ids})
+        except (ChatError, CryptoError):
+            pass
+
+    async def annotate(self, buffer: str, kind: str, target: dict, value: str = "") -> None:
+        """React to, edit or delete a message (target: {"id", "n", "text"}).
+        Older clients see the fallback text instead."""
+        quote = str(target.get("text") or "")[:40]
+        if kind == "react":
+            value = value.strip()[:MAX_REACTION]
+            extra, text = {"r": value, "to": target["id"]}, f"{value} (reagiu a “{quote}”)"
+        elif kind == "edit":
+            extra, text = {"ed": target["id"], "t2": value[:MAX_TEXT]}, f"[editou] {value}"
+        elif kind == "delete":
+            extra, text = {"del": target["id"]}, "[apagou uma mensagem]"
+        elif kind == "reply":
+            extra = {"re": {"id": target["id"], "n": target["n"], "q": str(target.get("text") or "")[:QUOTE]}}
+            text = value
+        else:
+            raise ChatError("ação desconhecida")
+        if buffer.startswith("#"):
+            self.send_message(buffer, text, extra)
+        else:
+            await self.send_dm(buffer[1:], text, extra)
 
     # --------------------------------------------------------- voice messages
 
