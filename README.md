@@ -241,7 +241,16 @@ clientes atrás de CGNAT ou do mesmo escritório dividem um IP: se for o caso da
 sua comunidade, suba `conns_per_ip` (padrão 32) pelo console.
 
 O que fica em disco no servidor (`registry.db`): nick → chave pública, e
-nome/tipo/salt/verificador dos canais. Nenhuma mensagem, nenhum arquivo, nenhum log de conversa.
+nome/tipo/salt/verificador dos canais, as prekeys públicas de cada nick e,
+se a caixa postal estiver ligada, os envelopes cifrados deixados para quem
+está offline (destinatário, horário e bytes opacos; veja *Mensagens para quem
+está offline*). Nenhuma mensagem legível, nenhum arquivo, nenhum log de conversa.
+
+A caixa postal tem os seus limites, também ajustáveis pelo console:
+`mail_days` (14 dias; 0 desliga), `mail_per_user` (200 envelopes guardados
+por destinatário), `mail_per_sender` (50 de um mesmo remetente para um mesmo
+destinatário) e `prekey_fetch_per_hour` (30 pacotes de prekeys por usuário
+por hora, para ninguém esgotar as chaves de uso único dos outros).
 
 ## Cliente
 
@@ -927,6 +936,56 @@ O que **não** garante:
 - Com clientes 1.0.0 e anteriores, tudo fica em v1: a mesma chave para todas
   as DMs da sessão e sem proteção contra repetição.
 
+### Mensagens para quem está offline
+
+Desde a 1.13.0, uma mensagem direta para alguém desconectado fica guardada no
+servidor, cifrada de ponta a ponta, e é entregue quando a pessoa voltar (até
+`mail_days`, 14 dias por padrão). Vale para texto, `/ttl` e convites com a
+chave do canal; áudio e arquivos continuam exigindo os dois online. A
+conversa mostra `[offline · escrita dd/mm hh:mm]` em quem recebe.
+
+Como funciona (o esquema do X3DH do Signal, adaptado):
+
+1. **Prekeys.** Cada cliente registrado publica uma *prekey assinada* (X25519,
+   assinada com a identidade Ed25519, trocada toda semana) e um estoque de
+   100 *prekeys de uso único* (X25519). As partes privadas ficam no disco do
+   cliente, cifradas com uma chave derivada da identidade: só abrem depois
+   que a senha da chave é digitada.
+2. **Quem escreve** pede um pacote ao servidor: a prekey assinada e uma de uso
+   único, que o servidor entrega uma vez e apaga. Confere a assinatura com a
+   chave fixada do contato (TOFU / `/verify`), gera uma chave efêmera EK e
+   deriva `SK = HKDF(DH(EK, SPK) ‖ DH(EK, OPK))`, ligada à identidade de
+   quem recebe, ao EK e aos ids das prekeys. Dela sai uma cadeia por HMAC,
+   uma chave por envelope. A chave privada efêmera é descartada na hora.
+3. **O envelope** é `0x04 | EK | id da SPK | id da OPK | n | ChaCha20-Poly1305`.
+   Dentro dele vão o nick de quem escreveu, o horário, o conteúdo e uma
+   assinatura Ed25519 sobre tudo isso e sobre o cabeçalho. O servidor guarda
+   só destinatário, horário, validade e os bytes: **não sabe quem deixou a
+   mensagem** (a cota por remetente usa um HMAC com uma chave que só existe na
+   memória do processo e some quando ele reinicia).
+4. **Quem recebe**, ao conectar, abre os envelopes, confere a assinatura com
+   a chave fixada do remetente, apaga do disco as prekeys de uso único usadas
+   e só então confirma o recebimento; o servidor apaga os envelopes. Um
+   envelope reapresentado depois disso é recusado.
+
+O que isso garante e o que não:
+
+- **Sigilo para a frente**: depois de lida, a mensagem não pode ser decifrada
+  nem com a identidade e as prekeys roubadas, porque a de uso único foi
+  apagada. Se as de uso único acabarem (alguém pediu pacotes demais), a
+  mensagem usa só a prekey assinada, e o sigilo para a frente passa a
+  depender da troca semanal dela (as antigas são apagadas depois de 22 dias).
+- **O servidor não forja nem lê**: a prekey precisa da assinatura do dono, e
+  o conteúdo da assinatura de quem escreveu.
+- **Metadados ficam mais tempo**: enquanto a mensagem espera, o servidor sabe
+  que *alguém* deixou algo para aquele nick e quando. Ele também vê quem pediu
+  o pacote de prekeys, o que no momento do envio indica o remetente.
+- **Uma instalação por nick**: as prekeys estão no disco de uma máquina. Se
+  o mesmo nick entrar de outra máquina, ela publica prekeys novas e a primeira
+  não abre o que foi selado para as dela.
+- Clientes até a 1.12 não publicam prekeys: para eles nada fica guardado e o
+  remetente é avisado de que a pessoa está offline, como antes.
+
 ### O que o servidor ainda enxerga
 
 Metadados: IPs, nicks online, quem está em qual canal, horário e tamanho
@@ -944,7 +1003,8 @@ aproximado (arredondado para 64 bytes) das mensagens, nomes dos canais.
   servidor, a partir do verificador. Use `gerar` e convide com `/invite`
   (veja *Convites com a chave*), ou uma senha longa.
 - Mensagens de canal são assinadas, então não há negação plausível entre membros.
-- Sem entrega offline para conversas diretas: só recebe quem está conectado.
+- Entrega offline só para texto, `/ttl` e convites, e só para quem usa
+  cliente 1.13.0+ (veja *Mensagens para quem está offline*).
   Em canais privados com histórico ligado, quem entra depois vê as mensagens
   guardadas (veja *Histórico de canais privados* e o que isso enfraquece).
 - O código não passou por auditoria independente.
