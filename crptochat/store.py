@@ -310,6 +310,16 @@ class Store:
         _write_private(self._users_path, self._users)
         return True
 
+    def uses_pq(self, nick: str) -> bool:
+        """This contact already showed us a post-quantum (ML-KEM) prekey."""
+        return bool(self._users.get(self.server_id, {}).get(nick.lower(), {}).get("pq"))
+
+    def set_uses_pq(self, nick: str) -> None:
+        entry = self._users.get(self.server_id, {}).get(nick.lower())
+        if entry and not entry.get("pq"):
+            entry["pq"] = True
+            _write_private(self._users_path, self._users)
+
     # --- disappearing messages in direct conversations ----------------------
     def dm_ttl(self, nick: str) -> int:
         data = _read(os.path.join(config_dir(), "dm_ttl.json"), {})

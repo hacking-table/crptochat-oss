@@ -246,8 +246,9 @@ def test_p2p_file_transfer(home, reverse):
             await until(lambda: tr.state == "done")
             assert open(tr.path, "rb").read() == data
             await until(lambda: next(iter(alice.files.transfers.values())).state == "done")
-            # Nothing but small signalling envelopes went through the server.
-            assert sum(len(f) for f in h.wire) < 20_000
+            # Nothing but small signalling envelopes went through the server (the
+            # first ones also carry the ML-KEM keys, ~1.6 KB each): far below the 300 KB file.
+            assert sum(len(f) for f in h.wire) < 40_000
     run(main())
 
 
