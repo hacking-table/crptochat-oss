@@ -67,7 +67,7 @@ def test_messages_wait_for_someone_offline(home):
             dump = json.dumps([[r[0], bytes(r[1]).hex()] for r in rows])
             assert "alice" not in dump and alice.identity.ik.hex() not in dump
             for row in rows:
-                assert bytes(row[1])[0] == crypto.MAIL_V1
+                assert bytes(row[1])[0] == (crypto.MAIL_PQ if crypto.HAS_MLKEM else crypto.MAIL_V1)
                 assert b"alice" not in bytes(row[1]) and "sumiu".encode() not in bytes(row[1])
             columns = [c[1] for c in h.server.db.execute("PRAGMA table_info(mailbox)")]
             assert columns == ["id", "to_lower", "ts", "expires", "body"]

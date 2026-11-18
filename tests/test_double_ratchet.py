@@ -140,7 +140,7 @@ def v3_bodies(h, to):
         msg = json.loads(frame)
         if msg.get("t") == "direct" and msg.get("to", "").lower() == to:
             body = b64d(msg["body"])
-            if body[:1] == b"\x03":
+            if body[:1] in (b"\x03", b"\x05"):
                 out.append(body)
     return out
 

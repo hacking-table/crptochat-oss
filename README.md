@@ -836,11 +836,13 @@ também o único jeito de mandar arquivo para quem usa cliente antigo.
 | ChaCha20-Poly1305 | cifra autenticada de mensagens e arquivos |
 | HKDF-SHA256 / HMAC-SHA256 | derivação de chaves e ratchet |
 | scrypt (N=2¹⁵) | senha da identidade local e senha dos canais privados |
+| ML-KEM-768 (FIPS 203) | camada pós-quântica das diretas e da caixa postal, misturada ao X25519 (com `cryptography` 47+) |
 
 Tudo vem da biblioteca [`cryptography`](https://cryptography.io); nenhuma cifra caseira.
 
-- **Diretas e sinalização**: ratchet por direção sobre chaves X25519
-  efêmeras, detalhado em *Sigilo das mensagens diretas* abaixo.
+- **Diretas e sinalização**: Double Ratchet sobre chaves X25519 efêmeras,
+  com ML-KEM-768 misturado à raiz, detalhado em *Sigilo das mensagens
+  diretas* abaixo.
 - **Canais**: cada membro tem uma cadeia própria (*sender key* com hash
   ratchet, uma chave por mensagem), entregue aos outros membros pelo envelope
   par a par. Quem entra depois recebe só o estado atual da cadeia e não lê o
@@ -903,6 +905,18 @@ dos canais, sinalização de arquivos e o `/ttl`) usa este protocolo:
    raiz. A negociação é a mesma do item 5 (capacidade `dr`): com clientes até
    a 1.10 tudo continua em v2.
 
+8. **Camada pós-quântica (cliente 1.14.0+, ML-KEM-768).** Cada sessão também
+   tem um par ML-KEM-768 (FIPS 203), cuja chave pública vai dentro dos
+   envelopes cifrados até o outro lado usá-la. Na primeira vez que um lado faz
+   um passo de DH já conhecendo a chave ML-KEM do outro, ele também encapsula
+   para ela e mistura o segredo na raiz junto com o DH:
+   `(RK, CK) = HKDF(salt=RK, DH ‖ ss_ML-KEM)`. Todos os envelopes daquela vez
+   levam o texto cifrado do ML-KEM (`0x05 | dh | pn | n | 1088 bytes | AEAD`),
+   para que o outro lado faça a mesma mistura qualquer que seja o envelope que
+   chegue primeiro. Depois que os dois lados misturaram, os envelopes voltam
+   ao tamanho normal. Com clientes até a 1.13, ou sem `cryptography` 47+, tudo
+   segue como no item 7.
+
 O que isso garante:
 
 - **Vazar a chave de identidade não abre DMs antigas**: ela só assina; as
@@ -916,6 +930,13 @@ O que isso garante:
   hora, mas perde o acesso assim que o dono do estado gera uma chave DH nova
   (ao responder) e o outro lado responde a ela. Isso vale mesmo para quem
   continua vendo todos os envelopes no servidor.
+- **Gravar hoje para decifrar com um computador quântico não funciona (1.14).**
+  Depois da mistura, a raiz guarda um segredo do ML-KEM: quem gravar o
+  tráfego e um dia quebrar o X25519 continua sem a raiz, e tudo o que deriva
+  dela fica fechado. A troca da chave ML-KEM vai dentro de envelopes já
+  autenticados, então o servidor não consegue removê-la. (A autenticação em
+  si continua sendo Ed25519: um computador quântico *no momento da conversa*
+  poderia se passar por alguém, mas não ler conversas gravadas.)
 - **Passado protegido dentro da sessão (v3).** As chaves DH de cada vez são
   apagadas na troca seguinte; quem copiar a memória não recalcula as
   mensagens de vezes anteriores.
@@ -967,6 +988,14 @@ Como funciona (o esquema do X3DH do Signal, adaptado):
    a chave fixada do remetente, apaga do disco as prekeys de uso único usadas
    e só então confirma o recebimento; o servidor apaga os envelopes. Um
    envelope reapresentado depois disso é recusado.
+
+**Pós-quântico (1.14.0+).** A prekey assinada ganha um par ML-KEM-768,
+também assinado com a identidade e trocado junto com ela. Quem escreve
+encapsula para essa chave e mistura o segredo com os DH, como no PQXDH do
+Signal: `SK = HKDF(DH1 ‖ DH2 ‖ ss_ML-KEM)`, com o texto cifrado no cabeçalho
+(envelope `0x05`, 1 KiB a mais). Depois de ver a chave pós-quântica de
+alguém, o cliente se recusa a mandar para essa pessoa sem ela: um servidor
+que a remova do pacote para forçar o modo clássico é pego.
 
 O que isso garante e o que não:
 
