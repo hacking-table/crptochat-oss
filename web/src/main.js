@@ -3,8 +3,14 @@
 // (b/<build>/vendor e b/<build>/py); nada de CDN, nada de script de terceiros.
 // O Python chega já compilado (py/*.zip, gerados por precompile.mjs no build).
 import { loadPyodide } from "./vendor/pyodide/pyodide.mjs";
-import { Terminal } from "./vendor/xterm/xterm.mjs";
-import { FitAddon } from "./vendor/xterm/addon-fit.mjs";
+// xterm.js is only needed after the login. Importing it here would put ~350 KB
+// of JavaScript on the critical path of the login page, which most visitors
+// never get past while Python is still starting. loadTerminal() fetches it in
+// launch(), together with the rest that the chat needs.
+let terminalModule = null;
+const loadTerminal = () => terminalModule ??= Promise.all([
+  import("./vendor/xterm/xterm.mjs"), import("./vendor/xterm/addon-fit.mjs"),
+]).then(([xterm, fit]) => ({ Terminal: xterm.Terminal, FitAddon: fit.FitAddon }));
 
 const $ = (id) => document.getElementById(id);
 const status = (text, err = false) => { $("status").textContent = text; $("status").classList.toggle("err", err); };
@@ -88,11 +94,11 @@ async function boot() {
   py.runPython("import sys, importlib; sys.path.insert(0, '/app'); importlib.invalidate_caches()");
   extras(py).catch(() => {});                              // starts now, in the background
   try {
-    await py.runPythonAsync("import crptoweb.boot, crptochat.tui");   // importa tudo antes do login
+    await py.runPythonAsync("import crptoweb.boot");        // leve: Textual vem só depois do login
   } catch (err) {
     if (!/ModuleNotFoundError/.test(String(err))) throw err;
     await extras(py);                                      // something outside the boot set: wait for the rest
-    await py.runPythonAsync("import crptoweb.boot, crptochat.tui");
+    await py.runPythonAsync("import crptoweb.boot");
   }
   mark("ready");
   return py;
@@ -425,6 +431,18 @@ async function launch(py, url, nick, pass, anon, sensitive) {
   $("go").disabled = true; status("carregando o resto…");
   try { await extras(py); } catch (err) { status("falha ao carregar: " + err.message, true); $("go").disabled = false; return; }
   status("conectando…");
+  // Now, and not before: the login page needs neither the xterm code nor its
+  // stylesheet. Both come from this build's own directory (see here()).
+  const [{ Terminal, FitAddon }] = await Promise.all([
+    loadTerminal(),
+    new Promise((ok, fail) => {
+      if (document.querySelector("link[data-xterm]")) return ok();
+      const link = document.createElement("link");
+      link.rel = "stylesheet"; link.href = here("vendor/xterm/xterm.css"); link.dataset.xterm = "1";
+      link.onload = ok; link.onerror = fail;
+      document.head.append(link);
+    }),
+  ]);
   chatStarted = true;
   $("login").hidden = true; $("term").hidden = false; $("keys").hidden = false;
   const term = new Terminal({ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 14,

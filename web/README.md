@@ -254,11 +254,13 @@ já trata isso com os outros clientes.
 
 ## Próximos passos
 
-1. **Velocidade** (o que falta): medir num celular de verdade. Se ainda pesar,
-   os próximos passos são o snapshot de memória do Pyodide (API privada,
+1. **Velocidade**: o login deixou de carregar xterm.js e Textual — medição
+   antes/depois e mapa de % em [PERF.md](PERF.md) (CPU 4×: 6,2 s → 4,4 s até o
+   botão “entrar”). Falta medir num celular de verdade. Se ainda pesar, os
+   próximos passos são o snapshot de memória do Pyodide (API privada,
    experimental; carregaria o Python já inicializado, guardado no aparelho
    depois da primeira visita) e diminuir o primeiro download, que hoje é
-   limitado pela banda.
+   limitado pela banda (`pyodide.asm.wasm`).
 2. ~~Layout estreito na TUI~~: PR #21.
 3. **Publicação** (só com isto pronto):
    - ~~build reproduzível no CI~~ (`web.yml`);

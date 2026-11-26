@@ -65,7 +65,11 @@ def main() -> int:
     app = os.path.join(HERE, "app.zip.tmp")
     app_zip(app)
     try:
-        subprocess.run(["node", os.path.join(HERE, "precompile.mjs"), os.path.join(HERE, "vendor"), app,
+        # On Windows the cryptography wheel aborts under Node; Chromium (the real
+        # target) runs it fine. WEB_PRECOMPILE_BROWSER=1 uses that path for local
+        # builds there. CI keeps the default, which does not need a browser.
+        tool = "precompile-browser.mjs" if os.environ.get("WEB_PRECOMPILE_BROWSER") else "precompile.mjs"
+        subprocess.run(["node", os.path.join(HERE, tool), os.path.join(HERE, "vendor"), app,
                         os.path.join(stage, "py")], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         print("o build precisa do Node 18+ (node no PATH)", file=sys.stderr)
@@ -88,18 +92,18 @@ def main() -> int:
     build_id = digest.hexdigest()[:16]
     base = f"b/{build_id}"
     os.rename(stage, os.path.join(DIST, base))
-    with open(os.path.join(HERE, "src", "index.html")) as fh:
+    with open(os.path.join(HERE, "src", "index.html"), encoding="utf-8") as fh:
         page = fh.read()
-    if page.count("__BUILD_DIR__") < 3:
+    if page.count("__BUILD_DIR__") < 2:   # stylesheet + module script (xterm loads later, from main.js)
         print("src/index.html sem __BUILD_DIR__ nos links", file=sys.stderr)
         return 1
-    with open(os.path.join(DIST, "index.html"), "w") as fh:
+    with open(os.path.join(DIST, "index.html"), "w", encoding="utf-8") as fh:
         fh.write(page.replace("__BUILD_DIR__", base))
     # the service worker caches exactly this build's files, under this build's id
     files = ["index.html"] + [f"{base}/{rel}" for rel in staged]
-    with open(os.path.join(HERE, "src", "sw.js")) as fh:
+    with open(os.path.join(HERE, "src", "sw.js"), encoding="utf-8") as fh:
         text = fh.read()
-    with open(os.path.join(DIST, "sw.js"), "w") as fh:
+    with open(os.path.join(DIST, "sw.js"), "w", encoding="utf-8") as fh:
         fh.write(text.replace('"__BUILD__"', json.dumps(build_id)).replace("__FILES__", json.dumps(files)))
     sums = []
     for base, _dirs, files in os.walk(DIST):
@@ -107,7 +111,7 @@ def main() -> int:
             path = os.path.join(base, name)
             with open(path, "rb") as fh:
                 sums.append(f"{hashlib.sha256(fh.read()).hexdigest()}  {os.path.relpath(path, DIST)}")
-    with open(os.path.join(DIST, "SHA256SUMS"), "w") as fh:
+    with open(os.path.join(DIST, "SHA256SUMS"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(sorted(sums, key=lambda s: s.split("  ")[1])) + "\n")
     total = sum(os.path.getsize(os.path.join(b, f)) for b, _d, fs in os.walk(DIST) for f in fs)
     print(f"web/dist/ pronto: build {build_id}, {len(sums)} arquivos, {total / 1e6:.1f} MB")

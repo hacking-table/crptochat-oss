@@ -7,10 +7,12 @@ from __future__ import annotations
 import asyncio
 import os
 
-# Textual reads this when it is first imported (textual.constants), so before driver.py
+# Textual reads this when it is first imported (textual.constants). Setting it
+# here, at module import, is enough: driver.py (and Textual) are imported only
+# in start(), after the login, so the page does not pay for them while the form
+# is still waiting for a nick and passphrase.
 os.environ["TEXTUAL_DRIVER"] = "crptoweb.driver:XtermDriver"
 
-from . import driver  # noqa: E402
 from .wire import check_url  # noqa: E402
 
 HOME = "/data/home"            # IndexedDB-backed (mounted and synced by main.js)
@@ -51,8 +53,10 @@ async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = Fa
     """
     prepare()
     # Read by crptochat.tui when a Buffer/ChatLog is created, so setting it here
-    # (before ChatApp) is enough even though the page imported tui earlier.
+    # (before ChatApp) is enough. The page imports tui only now, together with
+    # the driver and the rest of Textual.
     os.environ["CRPTOCHAT_SENSITIVE"] = "1" if sensitive else "0"
+    from . import driver  # noqa: E402  (imports Textual; not needed on the login page)
     driver.TERMINAL = terminal
 
     host, port, tls = check_url(url)

@@ -12,8 +12,13 @@ const builds = fs.readdirSync(path.join(root, "b"));
 if (builds.length !== 1) throw new Error(`esperava um build em dist/b/, achei ${builds.length}`);
 const dist = path.join(root, "b", builds[0]) + "/";
 const page = fs.readFileSync(path.join(root, "index.html"), "utf8");
-for (const ref of ["main.js", "style.css", "vendor/xterm/xterm.css"]) {
+for (const ref of ["main.js", "style.css"]) {
   if (!page.includes(`b/${builds[0]}/${ref}`)) throw new Error(`index.html não aponta para b/${builds[0]}/${ref}`);
+}
+// xterm is loaded after the login, so it is no longer a link in index.html.
+const client = fs.readFileSync(path.join(dist, "main.js"), "utf8");
+for (const ref of ['import("./vendor/xterm/xterm.mjs")', 'vendor/xterm/xterm.css']) {
+  if (!client.includes(ref)) throw new Error(`main.js não carrega ${ref} sob demanda`);
 }
 const { loadPyodide } = await import(dist + "vendor/pyodide/pyodide.mjs");
 const gz = (name) => new Uint8Array(zlib.gunzipSync(fs.readFileSync(dist + "py/" + name)));
@@ -35,9 +40,9 @@ const run = (label, code) => {
 run("boot sem o resto da stdlib", `
 import sys, importlib
 sys.path.insert(0, "/app"); importlib.invalidate_caches()
-import crptoweb.boot, crptochat.tui, crptoweb.keys
+import crptoweb.boot, crptoweb.keys
 crptoweb.boot.prepare()
-"crptoweb.boot, crptochat.tui, crptoweb.keys"`);
+"crptoweb.boot, crptoweb.keys (sem Textual)"`);
 
 // 1b. the rest of what runs in the page: the WebSocket transport, the Textual driver, the client
 run("transporte, driver e cliente", `
