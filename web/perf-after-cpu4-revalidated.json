@@ -1,0 +1,205 @@
+{
+  "label": "after-fresh",
+  "cpu": 4,
+  "runs": 5,
+  "timestamp": "2026-11-26T05:30:17.365Z",
+  "baselineCommit": "722d776",
+  "samples": [
+    {
+      "wall": 5262,
+      "marks": {
+        "pyodide": 2733,
+        "packages": 3766,
+        "ready": 4793
+      },
+      "nav": {
+        "dcl": 156,
+        "load": 157
+      },
+      "fcp": 152,
+      "scriptSeconds": 0.053,
+      "taskSeconds": 5.26,
+      "heapMB": 14.4,
+      "js": {
+        "files": 3,
+        "decodedKB": 1260,
+        "encodedKB": 270,
+        "names": [
+          "/b/730a133b019eb691/main.js (22 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 6
+      },
+      "beforeReady": {
+        "files": 13,
+        "encodedKB": 13322,
+        "decodedKB": 20308
+      },
+      "status": "pronto em 4.8 s",
+      "port": 52905
+    },
+    {
+      "wall": 4764,
+      "marks": {
+        "pyodide": 2355,
+        "packages": 3362,
+        "ready": 4310
+      },
+      "nav": {
+        "dcl": 141,
+        "load": 142
+      },
+      "fcp": 160,
+      "scriptSeconds": 0.038,
+      "taskSeconds": 4.754,
+      "heapMB": 14.5,
+      "js": {
+        "files": 3,
+        "decodedKB": 1260,
+        "encodedKB": 270,
+        "names": [
+          "/b/730a133b019eb691/main.js (22 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 6
+      },
+      "beforeReady": {
+        "files": 13,
+        "encodedKB": 13322,
+        "decodedKB": 20308
+      },
+      "status": "pronto em 4.3 s",
+      "port": 52905
+    },
+    {
+      "wall": 4661,
+      "marks": {
+        "pyodide": 2326,
+        "packages": 3228,
+        "ready": 4216
+      },
+      "nav": {
+        "dcl": 124,
+        "load": 124
+      },
+      "fcp": 128,
+      "scriptSeconds": 0.041,
+      "taskSeconds": 4.671,
+      "heapMB": 14.6,
+      "js": {
+        "files": 3,
+        "decodedKB": 1260,
+        "encodedKB": 270,
+        "names": [
+          "/b/730a133b019eb691/main.js (22 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 6
+      },
+      "beforeReady": {
+        "files": 13,
+        "encodedKB": 13322,
+        "decodedKB": 20308
+      },
+      "status": "pronto em 4.2 s",
+      "port": 52905
+    },
+    {
+      "wall": 4712,
+      "marks": {
+        "pyodide": 2266,
+        "packages": 3157,
+        "ready": 4270
+      },
+      "nav": {
+        "dcl": 125,
+        "load": 126
+      },
+      "fcp": 144,
+      "scriptSeconds": 0.028,
+      "taskSeconds": 4.724,
+      "heapMB": 14.5,
+      "js": {
+        "files": 3,
+        "decodedKB": 1260,
+        "encodedKB": 270,
+        "names": [
+          "/b/730a133b019eb691/main.js (22 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 6
+      },
+      "beforeReady": {
+        "files": 13,
+        "encodedKB": 13322,
+        "decodedKB": 20308
+      },
+      "status": "pronto em 4.3 s",
+      "port": 52905
+    },
+    {
+      "wall": 4636,
+      "marks": {
+        "pyodide": 2401,
+        "packages": 3294,
+        "ready": 4237
+      },
+      "nav": {
+        "dcl": 103,
+        "load": 108
+      },
+      "fcp": 224,
+      "scriptSeconds": 0.043,
+      "taskSeconds": 4.64,
+      "heapMB": 14.4,
+      "js": {
+        "files": 3,
+        "decodedKB": 1260,
+        "encodedKB": 270,
+        "names": [
+          "/b/730a133b019eb691/main.js (22 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/730a133b019eb691/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 6
+      },
+      "beforeReady": {
+        "files": 13,
+        "encodedKB": 13322,
+        "decodedKB": 20308
+      },
+      "status": "pronto em 4.2 s",
+      "port": 52905
+    }
+  ],
+  "summary": {
+    "ready": 4270,
+    "pyodide": 2355,
+    "packages": 3294,
+    "extras": null,
+    "wall": 4712,
+    "fcp": 152,
+    "scriptSeconds": 0.04,
+    "taskSeconds": 4.72,
+    "heapMB": 14.5,
+    "jsKB": 1260,
+    "cssKB": 6,
+    "firstLoadKB": 13322,
+    "jsFiles": 3,
+    "unzipAndImportsMs": 988
+  }
+}

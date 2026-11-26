@@ -7,6 +7,9 @@ novo por execução, service worker bloqueado, servidor local com gzip. O perfil
 `cpu4` usa `Emulation.setCPUThrottlingRate({rate:4})`, o mesmo usado no
 [roadmap do README](README.md#próximos-passos) para celular.
 
+Uma reexecução completa em 26/11/2026 confirmou os mesmos ganhos; veja
+[Revalidação](#revalidação-em-26112026) no fim deste arquivo.
+
 | | Antes (`8f383c2`) | Depois (`claude/web-perf`) |
 |---|---|---|
 | Botão “entrar” pronto — desktop | 1289 ms | 1044 ms |
@@ -89,3 +92,53 @@ Limitações: servidor em `localhost` (sem latência de rede real), Chromium em 
 de Safari/iOS, e nenhum celular físico. O próximo passo do roadmap — medir num
 aparelho — continua pendente; aqui o que se mediu foi o mesmo cenário antes e
 depois, com CPU limitada a 4×.
+
+## Revalidação em 26/11/2026
+
+Reexecução do A/B do zero, na mesma máquina: baseline (`8f383c2`) e otimizado
+(`722d776`) recompilados em worktrees separados com o mesmo `web/vendor` e
+`web/node_modules`. Os IDs de build repetiram — `05253dec19fe57d3` e
+`730a133b019eb691` —, confirmando que a compilação é determinística.
+
+Antes de medir, a suíte `pytest` foi rodada nos dois lados: **295 passed,
+21 skipped, 21 failed em ambos**. A coleção de `test_deploy_dash.py` falha no
+Windows por `signal.SIGHUP`, e as 21 falhas são pré-existentes e específicas do
+sistema (Unix sockets via `start_unix_server`, comando `cat`, assinatura de
+release); nenhuma toca no cliente web. No navegador, o botão de entrar ficou
+pronto sem `pageerrors`, nenhum recurso do xterm foi buscado antes do clique, e
+o terminal renderizou 42 linhas logo após ele (CSS e JS do xterm carregados
+aos ~2662 ms, contra ~1684 ms para o login).
+
+Mediana de 5 carregamentos frios, mesmo harness:
+
+| Métrica | CPU 4× (antes → depois) | Ganho 4× | Ganho 1× | Mapa |
+|:---|:---|---:|---:|:---:|
+| Fase unzip + imports | 3383 → 988 ms | +70,8% | +73,4% | 🟩🟩🟩 |
+| CSS no caminho do login | 13 → 6 KB | +53,8% | +53,8% | 🟩🟩🟩 |
+| Arquivos JS no login | 5 → 3 | +40,0% | +40,0% | 🟩🟩 |
+| Tempo até o botão “entrar” | 6618 → 4270 ms | +35,5% | +23,7% | 🟩🟩 |
+| Tempo total de carregamento | 6815 → 4712 ms | +30,9% | +20,7% | 🟩🟩 |
+| `TaskDuration` do renderer | 6,80 → 4,72 s | +30,6% | +23,2% | 🟩🟩 |
+| JS decodificado antes do login | 1598 → 1260 KB | +21,2% | +21,2% | 🟩🟩 |
+| FCP | 176 → 152 ms | +13,6% | +10,0% | 🟩 |
+| Boot do Pyodide | 2805 → 2355 ms | +16,0% | +3,7% | ⬜ ruído |
+| Bytes transferidos antes do login | 13412 → 13322 KB | +0,7% | +0,8% | ⬜ |
+| Heap JS | 13,4 → 14,5 MB | −8,2% | −8,2% | 🟥 esperado |
+
+No perfil CPU 1× os absolutos foram: botão pronto `1439 → 1098 ms`, wall
+`1510 → 1197 ms` e unzip + imports `488 → 130 ms`.
+
+Dados brutos: [`perf-baseline-cpu4-revalidated.json`](perf-baseline-cpu4-revalidated.json),
+[`perf-after-cpu4-revalidated.json`](perf-after-cpu4-revalidated.json),
+[`perf-baseline-cpu1-revalidated.json`](perf-baseline-cpu1-revalidated.json) e
+[`perf-after-cpu1-revalidated.json`](perf-after-cpu1-revalidated.json).
+
+```sh
+node web/perf.mjs --map web/perf-baseline-cpu4-revalidated.json web/perf-after-cpu4-revalidated.json
+node web/perf.mjs --map web/perf-baseline-cpu1-revalidated.json web/perf-after-cpu1-revalidated.json
+```
+
+Os dois conjuntos de medição concordam: o ganho estrutural está na fase de
+imports (~70%) e no JS do caminho do login (~21%); o restante varia com o ruído
+normal da máquina. A compilação, os testes e o fluxo do navegador estão ok —
+não há regressão introduzida pela mudança.

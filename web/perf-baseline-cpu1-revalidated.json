@@ -1,0 +1,215 @@
+{
+  "label": "baseline-fresh-cpu1",
+  "cpu": 1,
+  "runs": 5,
+  "timestamp": "2026-11-26T05:31:07.773Z",
+  "baselineCommit": "8f383c2",
+  "samples": [
+    {
+      "wall": 1620,
+      "marks": {
+        "pyodide": 754,
+        "packages": 977,
+        "ready": 1467
+      },
+      "nav": {
+        "dcl": 150,
+        "load": 150
+      },
+      "fcp": 144,
+      "scriptSeconds": 0.009,
+      "taskSeconds": 1.336,
+      "heapMB": 13.4,
+      "js": {
+        "files": 5,
+        "decodedKB": 1598,
+        "encodedKB": 357,
+        "names": [
+          "/b/05253dec19fe57d3/main.js (21 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/xterm.mjs (337 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/addon-fit.mjs (2 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 13
+      },
+      "beforeReady": {
+        "files": 16,
+        "encodedKB": 13412,
+        "decodedKB": 20653
+      },
+      "status": "pronto em 1.5 s",
+      "port": 55991
+    },
+    {
+      "wall": 1476,
+      "marks": {
+        "pyodide": 717,
+        "packages": 925,
+        "ready": 1413
+      },
+      "nav": {
+        "dcl": 64,
+        "load": 64
+      },
+      "fcp": 76,
+      "scriptSeconds": 0.008,
+      "taskSeconds": 1.249,
+      "heapMB": 13.4,
+      "js": {
+        "files": 5,
+        "decodedKB": 1598,
+        "encodedKB": 357,
+        "names": [
+          "/b/05253dec19fe57d3/main.js (21 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/xterm.mjs (337 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/addon-fit.mjs (2 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 13
+      },
+      "beforeReady": {
+        "files": 15,
+        "encodedKB": 11164,
+        "decodedKB": 18405
+      },
+      "status": "pronto em 1.4 s",
+      "port": 55991
+    },
+    {
+      "wall": 1698,
+      "marks": {
+        "pyodide": 858,
+        "packages": 1112,
+        "ready": 1643
+      },
+      "nav": {
+        "dcl": 54,
+        "load": 54
+      },
+      "fcp": 108,
+      "scriptSeconds": 0.008,
+      "taskSeconds": 1.449,
+      "heapMB": 13.4,
+      "js": {
+        "files": 5,
+        "decodedKB": 1598,
+        "encodedKB": 357,
+        "names": [
+          "/b/05253dec19fe57d3/main.js (21 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/xterm.mjs (337 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/addon-fit.mjs (2 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 13
+      },
+      "beforeReady": {
+        "files": 15,
+        "encodedKB": 11164,
+        "decodedKB": 18405
+      },
+      "status": "pronto em 1.6 s",
+      "port": 55991
+    },
+    {
+      "wall": 1510,
+      "marks": {
+        "pyodide": 800,
+        "packages": 1027,
+        "ready": 1439
+      },
+      "nav": {
+        "dcl": 71,
+        "load": 71
+      },
+      "fcp": 80,
+      "scriptSeconds": 0.01,
+      "taskSeconds": 1.245,
+      "heapMB": 13.2,
+      "js": {
+        "files": 5,
+        "decodedKB": 1598,
+        "encodedKB": 357,
+        "names": [
+          "/b/05253dec19fe57d3/main.js (21 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/addon-fit.mjs (2 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/xterm.mjs (337 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 13
+      },
+      "beforeReady": {
+        "files": 15,
+        "encodedKB": 11164,
+        "decodedKB": 18405
+      },
+      "status": "pronto em 1.4 s",
+      "port": 55991
+    },
+    {
+      "wall": 1336,
+      "marks": {
+        "pyodide": 691,
+        "packages": 876,
+        "ready": 1285
+      },
+      "nav": {
+        "dcl": 48,
+        "load": 48
+      },
+      "fcp": 80,
+      "scriptSeconds": 0.008,
+      "taskSeconds": 1.102,
+      "heapMB": 13.3,
+      "js": {
+        "files": 5,
+        "decodedKB": 1598,
+        "encodedKB": 357,
+        "names": [
+          "/b/05253dec19fe57d3/main.js (21 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.mjs (17 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/xterm.mjs (337 KB)",
+          "/b/05253dec19fe57d3/vendor/xterm/addon-fit.mjs (2 KB)",
+          "/b/05253dec19fe57d3/vendor/pyodide/pyodide.asm.mjs (1221 KB)"
+        ]
+      },
+      "css": {
+        "decodedKB": 13
+      },
+      "beforeReady": {
+        "files": 15,
+        "encodedKB": 11164,
+        "decodedKB": 18405
+      },
+      "status": "pronto em 1.3 s",
+      "port": 55991
+    }
+  ],
+  "summary": {
+    "ready": 1439,
+    "pyodide": 754,
+    "packages": 977,
+    "extras": null,
+    "wall": 1510,
+    "fcp": 80,
+    "scriptSeconds": 0.01,
+    "taskSeconds": 1.25,
+    "heapMB": 13.4,
+    "jsKB": 1598,
+    "cssKB": 13,
+    "firstLoadKB": 11164,
+    "jsFiles": 5,
+    "unzipAndImportsMs": 488
+  }
+}
